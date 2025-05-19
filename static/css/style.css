@@ -1,0 +1,476 @@
+body, .dashboard-bg {
+    background: #dddddd;
+    min-height: 100vh;
+    margin: 0;
+    padding: 0;
+    font-family: Arial, sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: #2196F3;
+}
+
+.container {
+    width: 90%;
+    max-width: 1200px;
+    margin: auto;
+    padding: 20px;
+}
+
+.frame {
+    background-color: #ADD8E6;
+    border-radius: 24px;
+    border: 3px solid #808080;
+    padding: 20px;
+    margin-bottom: 20px;
+    transition: background-color 0.3s;
+}
+
+.frame:hover {
+    background-color: #90EE90;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+.table th, .table td {
+    border: 1px solid #808080;
+    padding: 10px;
+    text-align: center;
+}
+
+.table th {
+    background-color: #2196F3;
+    color: white;
+}
+
+.table tr:hover {
+    background-color: #f1f1f1;
+}
+
+.button {
+    background-color: #90EE90;
+    color: black;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.button:hover {
+    background-color: #98FB98;
+}
+
+.label {
+    color: #2196F3;
+    font-weight: bold;
+    text-align: center;
+}
+
+.input-field {
+    width: 100%;
+    padding: 10px;
+    margin: 5px 0;
+    border: 1px solid #808080;
+    border-radius: 4px;
+}
+
+.textarea {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #808080;
+    border-radius: 4px;
+    resize: vertical;
+}
+
+.checkbox {
+    margin: 10px 0;
+}
+
+.dashboard-title {
+    text-align: center;
+    color: #0000ff;
+    font-size: 48px;
+    font-weight: bold;
+    margin-top: 32px;
+    margin-bottom: 32px;
+    font-family: Arial, sans-serif;
+    letter-spacing: 2px;
+}
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    padding: 20px;
+    direction: rtl;
+}
+
+.dashboard-card {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #ADD8E6;
+    border-radius: 24px;
+    border: 3px solid #808080;
+    box-shadow: 2px 2px 4px #888888;
+    font-size: 2rem;
+    font-weight: bold;
+    color: #111;
+    text-decoration: none;
+    width: 312px;
+    height: 200px;
+    text-align: center;
+    transition: box-shadow 0.2s, transform 0.2s;
+    margin: auto;
+}
+
+.dashboard-card:hover {
+    box-shadow: 4px 4px 16px #666666;
+    transform: scale(1.03);
+}
+
+.instructors-container {
+    direction: rtl;
+    padding: 20px;
+    background-color: #d3d3d3;
+    min-height: 100vh;
+}
+
+.page-title {
+    color: #0000FF;
+    font-size: 48px;
+    font-weight: bold;
+    text-align: center;
+    margin-bottom: 20px;
+    font-family: Arial, sans-serif;
+}
+
+.add-instructor {
+    background-color: #90EE90;
+    color: black;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 16px;
+    cursor: pointer;
+    float: left;
+    margin-bottom: 10px;
+}
+
+.table-container {
+    clear: both;
+    margin-top: 20px;
+}
+
+.instructors-table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: white;
+    font-family: Arial, sans-serif;
+}
+
+.instructors-table th, .instructors-table td {
+    border: 1px solid #808080;
+    padding: 12px;
+    text-align: center;
+}
+
+.header-cell {
+    background-color: #f0f0f0;
+    color: #0000FF;
+    font-weight: bold;
+    font-size: 18px;
+}
+
+.index-column {
+    color: #0000FF;
+    font-weight: bold;
+    width: 40px;
+}
+
+.email-link {
+    color: #0000FF;
+    text-decoration: none;
+}
+
+.phone-link {
+    color: #FF00FF;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.instructors-table tr:nth-child(even) {
+    background-color: #f8f8f8;
+}
+
+.instructors-table tr:hover {
+    background-color: #f0f0f0;
+}
+
+.clients-container {
+    direction: rtl;
+    padding: 20px;
+    background-color: #d3d3d3;
+    min-height: 100vh;
+    margin: 0;
+}
+
+.table-wrapper {
+    width: 100%;
+    direction: rtl; /* RTL for the table frame and columns */
+}
+
+.clients-table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: white;
+    font-family: Arial, sans-serif;
+    direction: rtl; /* RTL for the table itself */
+}
+
+.clients-table th, 
+.clients-table td {
+    border: 1px solid #808080;
+    padding: 12px;
+    text-align: center;
+}
+
+/* Add width to control column sizes */
+.clients-table th {
+    min-width: 120px;
+}
+
+.clients-table .index-column {
+    width: 40px;
+    min-width: 40px;  /* Force narrow index column */
+}
+
+.calendar-container {
+    background: #dddddd;
+    padding: 30px;
+    min-height: 100vh;
+    direction: rtl;
+}
+.calendar-title {
+    color: #0000FF;
+    font-size: 48px;
+    font-weight: bold;
+    text-align: center;
+    margin-bottom: 16px;
+    font-family: Arial, sans-serif;
+}
+.calendar-header {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 16px;
+    gap: 24px;
+}
+.calendar-month-label {
+    font-size: 28px;
+    color: #0000FF;
+    font-weight: bold;
+    font-family: Arial, sans-serif;
+}
+.calendar-nav-btn {
+    background: #ADD8E6;
+    border: 1px solid #808080;
+    border-radius: 6px;
+    font-size: 22px;
+    width: 40px;
+    height: 40px;
+    color: black;
+    cursor: pointer;
+    margin: 0 8px;
+}
+.calendar-nav-btn:hover {
+    background: #90EE90;
+}
+.calendar-grid {
+    display: flex;
+    flex-direction: column;
+    background: white;
+    border-radius: 12px;
+    border: 1px solid #ccc;
+    padding: 24px;
+    margin: 0 auto;
+    max-width: 1200px;
+}
+.calendar-row {
+    display: flex;
+    flex-direction: row-reverse; /* RTL: rightmost is first */
+}
+.calendar-cell {
+    flex: 1;
+    min-width: 120px;
+    min-height: 100px;
+    border: 1px solid #ccc;
+    margin: 1px;
+    background: #fff;
+    position: relative;
+    padding: 4px 6px 4px 6px;
+    box-sizing: border-box;
+    font-family: Arial, sans-serif;
+}
+.calendar-day-header {
+    background: #f0f0f0;
+    color: #0000FF;
+    font-weight: bold;
+    font-size: 20px;
+    text-align: center;
+    border-radius: 0;
+}
+.calendar-day-num {
+    font-size: 18px;
+    font-weight: bold;
+    color: #111;
+    margin-bottom: 4px;
+}
+.calendar-today {
+    background: #FFCCCB !important;
+}
+.calendar-event {
+    background: #e0e0e0;
+    color: #111;
+    font-size: 16px;
+    border-radius: 6px;
+    margin: 2px 0;
+    padding: 2px 6px;
+    text-align: right;
+    white-space: pre-line;
+}
+.calendar-overflow {
+    background: #fff;
+    color: #111;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.calendar-empty {
+    background: transparent;
+    border: none;
+}
+.calendar-back-btn {
+    background: #eeeeee;
+    color: #111;
+    font-size: 20px;
+    font-family: Arial, sans-serif;
+    border-radius: 8px;
+    border: 1px solid #888;
+    padding: 8px 32px;
+    font-weight: bold;
+    transition: background 0.2s;
+}
+.calendar-back-btn:hover {
+    background: #cccccc;
+}
+
+.billing-container {
+    direction: rtl;
+    padding: 20px;
+    background-color: #d3d3d3;
+    min-height: 100vh;
+}
+
+.billing-table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: white;
+    font-family: Arial, sans-serif;
+}
+
+.billing-table th,
+.billing-table td {
+    border: 1px solid #808080;
+    padding: 12px;
+    text-align: center !important;
+    vertical-align: middle;
+}
+
+.billing-table .header-cell {
+    background-color: #f0f0f0;
+    color: #0000FF;
+    font-weight: bold;
+    font-size: 18px;
+}
+
+.billing-table .amount-cell {
+    text-align: left;
+    direction: ltr;
+}
+
+.billing-table .date-cell {
+    text-align: center;
+    direction: ltr;
+}
+
+.billing-table .index-column {
+    width: 40px;
+    min-width: 40px;
+}
+
+.billing-table .number-cell {
+    text-align: left;
+    direction: ltr;
+    font-family: Arial, sans-serif;
+}
+
+.billing-table tr:nth-child(even) {
+    background-color: #f8f8f8;
+}
+
+.billing-table tr:hover {
+    background-color: #f0f0f0;
+}
+
+.worksheet-selector {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    direction: rtl;
+}
+
+.worksheet-dropdown {
+    padding: 8px 12px;
+    font-size: 16px;
+    border: 1px solid #808080;
+    border-radius: 4px;
+    background-color: white;
+    color: #0000FF;
+    font-family: Arial, sans-serif;
+    min-width: 200px;
+    text-align: right;
+}
+
+.worksheet-dropdown:hover {
+    border-color: #0000FF;
+}
+
+.worksheet-dropdown:focus {
+    outline: none;
+    border-color: #0000FF;
+    box-shadow: 0 0 0 2px rgba(0,0,255,0.1);
+}
+
+@media (max-width: 900px) {
+    .dashboard-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 600px) {
+    .dashboard-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+        padding: 10px;
+    }
+    .dashboard-card {
+        font-size: 1.1em;
+        padding: 18px 0;
+    }
+}

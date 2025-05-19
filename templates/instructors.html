@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <title>Instructors</title>
+    <style>
+        /* Modal Styles */
+        .instructor-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            direction: rtl;
+        }
+
+        .instructor-modal-content {
+            background-color: #f1f1f1;
+            padding: 30px;
+            border-radius: 10px;
+            width: 400px;
+            max-width: 90%;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            text-align: center;
+        }
+
+        .modal-header {
+            text-align: center;
+            color: #0099ff;
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+
+        .form-group label {
+            margin-bottom: 5px;
+            color: #0099ff;
+            font-weight: bold;
+        }
+
+        .form-group input, 
+        .form-group textarea {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            text-align: center;
+            width: 90%;
+        }
+
+        .form-group textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+        }
+
+        .modal-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .modal-buttons button {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        .save-btn {
+            background-color: #0099ff;
+            color: white;
+        }
+
+        .cancel-btn {
+            background-color: #dddddd;
+        }
+
+        .close-button {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+        }
+
+        .clickable-cell {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    {% extends 'base.html' %}
+
+    {% block content %}
+    <div class="instructors-container">
+        <h1 class="page-title">מדריכים</h1>
+        <div class="table-wrapper">
+            <button class="add-instructor">הוספת מדריך</button>
+            <table class="instructors-table">
+                <thead>
+                    <tr>
+                        <th class="header-cell index-column">#</th>
+                        <th class="header-cell">שם</th>
+                        <th class="header-cell">טלפון</th>
+                        <th class="header-cell">מייל</th>
+                        <th class="header-cell">התמחויות</th>
+                        <th class="header-cell">הערות</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for instructor in instructors %}
+                    <tr data-row-index="{{ loop.index }}" data-instructor-id="{{ loop.index0 }}">
+                        <td class="index-column">{{ loop.index }}</td>
+                        <td class="clickable-cell">{{ instructor.שם }}</td>
+                        <td><a href="tel:{{ instructor.טלפון }}" class="phone-link">{{ instructor.טלפון }}</a></td>
+                        <td><a href="mailto:{{ instructor.מייל }}" class="email-link">{{ instructor.מייל }}</a></td>
+                        <td class="clickable-cell">{{ instructor.התמחויות }}</td>
+                        <td class="clickable-cell">{{ instructor.הערות }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div style="margin-top: 24px; text-align: center;">
+            <a href="{{ url_for('dashboard') }}">
+                <button class="calendar-back-btn">חזרה</button>
+            </a>
+        </div>
+    </div>
+
+    <!-- Instructor Modal -->
+    <div class="instructor-modal" id="instructorModal">
+        <div class="instructor-modal-content">
+            <button class="close-button">&times;</button>
+            <h2 class="modal-header">פרטי מדריך</h2>
+            <form id="instructorForm">
+                <input type="hidden" id="instructorIndex" name="instructorIndex" value="">
+                <input type="hidden" id="rowIndex" name="rowIndex" value="">
+                
+                <div class="form-group">
+                    <label for="instructorName">שם</label>
+                    <input type="text" id="instructorName" name="שם" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="instructorPhone">טלפון</label>
+                    <input type="tel" id="instructorPhone" name="טלפון">
+                </div>
+                
+                <div class="form-group">
+                    <label for="instructorEmail">מייל</label>
+                    <input type="email" id="instructorEmail" name="מייל">
+                </div>
+                
+                <div class="form-group">
+                    <label for="instructorSpecialization">התמחויות</label>
+                    <input type="text" id="instructorSpecialization" name="התמחויות">
+                </div>
+                
+                <div class="form-group">
+                    <label for="instructorNotes">הערות</label>
+                    <textarea id="instructorNotes" name="הערות"></textarea>
+                </div>
+                
+                <div class="checkbox-group">
+                    <input type="checkbox" id="instructorActive" name="פעיל">
+                    <label for="instructorActive">פעיל</label>
+                </div>
+                
+                <div class="modal-buttons">
+                    <button type="submit" class="save-btn">שמור</button>
+                    <button type="button" class="cancel-btn">ביטול</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Get all instructors data from the server
+        const instructorsData = JSON.parse('{{ instructors|tojson|safe }}');
+        const modal = document.getElementById('instructorModal');
+        const form = document.getElementById('instructorForm');
+        const closeButton = document.querySelector('.close-button');
+        const cancelButton = document.querySelector('.cancel-btn');
+        
+        // Add event listeners to clickable cells
+        document.querySelectorAll('.clickable-cell').forEach(cell => {
+            cell.addEventListener('click', function() {
+                const row = this.parentElement;
+                const instructorId = parseInt(row.dataset.instructorId);
+                const rowIndex = parseInt(row.dataset.rowIndex);
+                openInstructorModal(instructorId, rowIndex);
+            });
+        });
+        
+        // Close modal functions
+        function closeModal() {
+            modal.style.display = 'none';
+        }
+        
+        closeButton.addEventListener('click', closeModal);
+        cancelButton.addEventListener('click', closeModal);
+        
+        window.addEventListener('click', function(event) {
+            if (event.target === modal) {
+                closeModal();
+            }
+        });
+        
+        // Open modal with instructor data
+        function openInstructorModal(instructorId, rowIndex) {
+            const instructor = instructorsData[instructorId];
+            
+            document.getElementById('instructorIndex').value = instructorId;
+            document.getElementById('rowIndex').value = rowIndex;
+            document.getElementById('instructorName').value = instructor['שם'] || '';
+            document.getElementById('instructorPhone').value = instructor['טלפון'] || '';
+            document.getElementById('instructorEmail').value = instructor['מייל'] || '';
+            document.getElementById('instructorSpecialization').value = instructor['התמחויות'] || '';
+            document.getElementById('instructorNotes').value = instructor['הערות'] || '';
+            
+            // Set active checkbox based on status column
+            const isActive = instructor['סטטוס'] !== 'לא פעיל';
+            document.getElementById('instructorActive').checked = isActive;
+            
+            modal.style.display = 'flex';
+        }
+        
+        // Submit form handler
+        form.addEventListener('submit', function(event) {
+            event.preventDefault();
+            
+            const instructorId = document.getElementById('instructorIndex').value;
+            const rowIndex = document.getElementById('rowIndex').value;
+            
+            const updatedData = {
+                שם: document.getElementById('instructorName').value,
+                טלפון: document.getElementById('instructorPhone').value,
+                מייל: document.getElementById('instructorEmail').value,
+                התמחויות: document.getElementById('instructorSpecialization').value,
+                הערות: document.getElementById('instructorNotes').value,
+                סטטוס: document.getElementById('instructorActive').checked ? 'פעיל' : 'לא פעיל'
+            };
+            
+            // Send data to server
+            fetch('/update_instructor', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    index: parseInt(instructorId) + 2, // +2 because Google Sheets is 1-indexed and has headers
+                    data: updatedData
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Update the table row with new data
+                    const row = document.querySelector(`tr[data-instructor-id="${instructorId}"]`);
+                    if (row) {
+                        row.cells[1].textContent = updatedData.שם;
+                        row.cells[2].querySelector('a').textContent = updatedData.טלפון;
+                        row.cells[2].querySelector('a').href = `tel:${updatedData.טלפון}`;
+                        row.cells[3].querySelector('a').textContent = updatedData.מייל;
+                        row.cells[3].querySelector('a').href = `mailto:${updatedData.מייל}`;
+                        row.cells[4].textContent = updatedData.התמחויות;
+                        row.cells[5].textContent = updatedData.הערות;
+                    }
+                    
+                    // Update the local data
+                    instructorsData[instructorId] = updatedData;
+                    
+                    // Close the modal
+                    closeModal();
+                    
+                    alert('המדריך עודכן בהצלחה!');
+                } else {
+                    alert('שגיאה בעדכון המדריך. אנא נסו שנית.');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('שגיאה בעדכון המדריך. אנא נסו שנית.');
+            });
+        });
+    });
+    </script>
+    {% endblock %}
+</body>
+</html>

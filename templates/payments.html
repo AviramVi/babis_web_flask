@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payments</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    {% extends 'base.html' %}
+
+    {% block content %}
+    <div class="billing-container">
+        <h1 class="page-title">תשלומים</h1>
+        <div class="worksheet-selector">
+            <form method="get" id="worksheetForm">
+                <select name="worksheet" id="worksheetSelect" class="worksheet-dropdown" onchange="document.getElementById('worksheetForm').submit()">
+                    {% for name in worksheet_names %}
+                        <option value="{{ name }}" {% if name == selected_worksheet %}selected{% endif %}>
+                            {{ name }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
+        <div class="table-wrapper">
+            <table class="billing-table">
+                <thead>
+                    <tr>
+                        <th class="header-cell index-column">#</th>
+                        {% for header in headers %}
+                            <th class="header-cell">{{ header }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for record in records %}
+                    <tr>
+                        <td class="index-column">{{ loop.index }}</td>
+                        <td class="{% if '\n' in record['מדריך'] %}swap-lines{% endif %}">
+                            {% for line in record['מדריך'].split('\n') %}
+                                {{ line|safe }}{% if not loop.last %}<br>{% endif %}
+                            {% endfor %}
+                        </td>
+                        <td class="number-cell">{{ record['סהכ שעות']|replace('\n', '<br>')|safe }}</td>
+                        <td class="number-cell">{{ record['לפי לקוח']|replace('\n', '<br>')|safe }}</td>
+                        <td>{{ record['לקוח']|replace('\n', '<br>')|safe }}</td>
+                        <td class="number-cell">₪{{ record['שכר שעה']|replace('\n', '<br>')|safe }}</td>
+                        <td class="number-cell">₪{{ record['סיכום']|replace('\n', '<br>')|safe }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div style="margin-top: 24px; text-align: center;">
+            <a href="{{ url_for('dashboard') }}">
+                <button class="calendar-back-btn">חזרה</button>
+            </a>
+        </div>
+    </div>
+    {% endblock %}
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

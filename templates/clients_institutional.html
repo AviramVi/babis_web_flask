@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <title>Institutional Clients</title>
+</head>
+<body>
+    {% extends "base.html" %}
+
+    {% block content %}
+    <div class="clients-container">
+        <h1 class="page-title">לקוחות מוסדיים</h1>
+        <div class="table-wrapper">
+            <button class="add-client">הוספת לקוח מוסדי</button>
+            <table class="clients-table" dir="rtl">
+                <thead>
+                    <tr>
+                        <th class="header-cell index-column">#</th>
+                        {% for header in headers %}
+                            <th class="header-cell">{{ header }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for client in clients %}
+                    <tr>
+                        <td class="index-column">{{ loop.index }}</td>
+                        {% for header in headers %}
+                            <td>
+                                {% if header == 'טלפון' %}
+                                    <a href="tel:{{ client[header] }}" class="phone-link">{{ client[header] }}</a>
+                                {% elif header == 'מייל' %}
+                                    <a href="mailto:{{ client[header] }}" class="email-link">{{ client[header] }}</a>
+                                {% else %}
+                                    {{ client[header] }}
+                                {% endif %}
+                            </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div style="margin-top: 24px; text-align: center;">
+            <a href="{{ url_for('dashboard') }}">
+                <button class="calendar-back-btn">חזרה</button>
+            </a>
+        </div>
+    </div>
+    {% endblock %}
+</body>
+</html>

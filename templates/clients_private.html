@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Private Clients</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        /* Notification Styles */
+        .notification {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #4CAF50;
+            color: white;
+            padding: 15px 25px;
+            border-radius: 4px;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+            pointer-events: none;
+        }
+
+        .notification.show {
+            opacity: 1;
+        }
+
+        .notification.error {
+            background-color: #f44336;
+        }
+
+        /* Modal Styles */
+        .client-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            direction: rtl;
+        }
+
+        .client-modal-content {
+            background-color: #f1f1f1;
+            padding: 30px;
+            border-radius: 10px;
+            width: 400px;
+            max-width: 90%;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            text-align: center;
+        }
+
+        .modal-header {
+            text-align: center;
+            color: #0099ff;
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+
+        .form-group label {
+            margin-bottom: 5px;
+            color: #0099ff;
+            font-weight: bold;
+        }
+
+
+        .form-group input, 
+        .form-group textarea {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            text-align: center;
+            width: 90%;
+        }
+
+        .form-group textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+        }
+
+        .modal-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .modal-buttons button {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        .save-btn {
+            background-color: #0099ff;
+            color: white;
+        }
+
+        .cancel-btn {
+            background-color: #dddddd;
+        }
+
+        .close-button {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+        }
+
+
+        .clickable-cell {
+            cursor: pointer;
+        }
+        
+        .inactive-client {
+            text-decoration: line-through;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    {% extends 'base.html' %}
+
+    {% block content %}
+    <div class="clients-container">
+        <h1 class="page-title">לקוחות פרטיים</h1>
+        <div class="table-wrapper">
+            <button class="add-client">הוספת לקוח פרטי</button>
+            <table class="clients-table" dir="rtl">
+                <thead>
+                    <tr>
+                        <th class="header-cell index-column">#</th>
+                        <th class="header-cell">שם</th>
+                        <th class="header-cell">טלפון</th>
+                        <th class="header-cell">מייל</th>
+                        <th class="header-cell">צורך מיוחד</th>
+                        <th class="header-cell">הערות</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for client in clients %}
+                    <tr data-client-id="{{ loop.index0 }}" data-row-index="{{ loop.index }}" data-sheet-row="{{ client.sheet_row }}" 
+                        {% if client['פעיל'] and client['פעיל'].strip() == 'לא פעיל' %}class="inactive-client"{% endif %}>
+                        <td class="index-column">{{ loop.index }}</td>
+                        <td class="clickable-cell">{{ client['שם'] }}</td>
+                        <td><a href="tel:{{ client['טלפון'] }}" class="phone-link">{{ client['טלפון'] }}</a></td>
+                        <td><a href="mailto:{{ client['מייל'] }}" class="email-link">{{ client['מייל'] }}</a></td>
+                        <td class="clickable-cell">{{ client['צורך מיוחד'] }}</td>
+                        <td class="clickable-cell">{{ client['הערות'] }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div style="margin-top: 24px; text-align: center;">
+            <a href="{{ url_for('dashboard') }}">
+                <button class="calendar-back-btn">חזרה</button>
+            </a>
+        </div>
+    </div>
+
+    <!-- Client Modal -->
+    <div class="client-modal" id="clientModal">
+        <div class="client-modal-content">
+            <button class="close-button">&times;</button>
+            <h2 class="modal-header">פרטי לקוח</h2>
+            <form id="clientForm">
+                <input type="hidden" id="clientIndex" name="clientIndex" value="">
+                <input type="hidden" id="rowIndex" name="rowIndex" value="">
+                <input type="hidden" id="sheetRow" name="sheetRow" value="">
+                
+                <div class="form-group">
+                    <label for="clientName">שם</label>
+                    <input type="text" id="clientName" name="שם" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="clientPhone">טלפון</label>
+                    <input type="tel" id="clientPhone" name="טלפון" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="clientEmail">מייל</label>
+                    <input type="email" id="clientEmail" name="מייל">
+                </div>
+                
+                <div class="form-group">
+                    <label for="clientSpecialNeed">צורך מיוחד</label>
+                    <input type="text" id="clientSpecialNeed" name="צורך מיוחד">
+                </div>
+                
+                <div class="form-group">
+                    <label for="clientNotes">הערות</label>
+                    <textarea id="clientNotes" name="הערות"></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="clientActive" name="active" checked>
+                        <label for="clientActive">פעיל</label>
+                    </div>
+                </div>
+                
+                <div class="modal-buttons">
+                    <button type="button" class="cancel-btn">ביטול</button>
+                    <button type="submit" class="save-btn">שמור</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Notification -->
+    <div id="notification" class="notification"></div>
+
+    <script src="{{ url_for('static', filename='js/clients_private.js') }}"></script>
+    {% endblock %}
+</body>
+</html>

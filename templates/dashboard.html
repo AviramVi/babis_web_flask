@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <main>
+            <div class="dashboard-bg">
+                <div class="dashboard-grid">
+                    <a href="{{ url_for('instructors') }}" class="dashboard-card">מדריכים</a>
+                    <a href="{{ url_for('clients_private') }}" class="dashboard-card">לקוחות פרטיים</a>
+                    <a href="{{ url_for('clients_institutional') }}" class="dashboard-card">לקוחות מוסדיים</a>
+                    <a href="{{ url_for('calendar_page') }}" class="dashboard-card">לוח שנה</a>
+                    <a href="{{ url_for('billing') }}" class="dashboard-card">חיובים</a>
+                    <a href="{{ url_for('payments') }}" class="dashboard-card">תשלומים</a>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
