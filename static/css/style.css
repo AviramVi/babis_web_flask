@@ -45,6 +45,59 @@ h1, h2, h3, h4, h5, h6 {
 .table th {
     background-color: #2196F3;
     color: white;
+    position: relative;
+    padding-right: 25px;
+    padding-left: 10px;
+    cursor: pointer;
+    user-select: none;
+}
+
+/* Sort indicators - visible on all sortable headers */
+.table th.header-cell::after {
+    content: '';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    border: 5px solid transparent;
+    opacity: 0.5;
+}
+
+/* Up arrow (for both states) */
+.table th.header-cell.sort-asc::after,
+.table th.header-cell.sort-desc::after {
+    border-bottom: 5px solid #fff;
+    margin-top: -10px;
+    opacity: 1;
+}
+
+/* Down arrow (for both states) */
+.table th.header-cell.sort-asc::before,
+.table th.header-cell.sort-desc::before {
+    content: '';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    border: 5px solid transparent;
+    border-top: 5px solid #fff;
+    margin-top: 2px;
+    opacity: 0.5;
+}
+
+/* Active sort state - highlight the active arrow */
+.table th.header-cell.sort-asc::after {
+    opacity: 1;
+    border-bottom-color: #fff;
+}
+
+.table th.header-cell.sort-desc::before {
+    opacity: 1;
+    border-top-color: #fff;
+}
+
+/* Hide the inactive arrow when sorted */
+.table th.header-cell.sort-asc::before,
+.table th.header-cell.sort-desc::after {
+    opacity: 0.3;
 }
 
 .table tr:hover {
@@ -150,7 +203,7 @@ h1, h2, h3, h4, h5, h6 {
     font-family: Arial, sans-serif;
 }
 
-.add-instructor {
+.add-instructor, .add-client {
     background-color: #90EE90;
     color: black;
     padding: 8px 16px;
@@ -160,6 +213,11 @@ h1, h2, h3, h4, h5, h6 {
     cursor: pointer;
     float: left;
     margin-bottom: 10px;
+    transition: background-color 0.2s;
+}
+
+.add-instructor:hover, .add-client:hover {
+    background-color: #7cd47c;
 }
 
 .table-container {
@@ -301,9 +359,13 @@ h1, h2, h3, h4, h5, h6 {
     margin: 0 auto;
     max-width: 1200px;
 }
+.calendar-days {
+    display: flex;
+    flex-direction: row; /* Keep weekday headers in normal order */
+}
 .calendar-row {
     display: flex;
-    flex-direction: row-reverse; /* RTL: rightmost is first */
+    flex-direction: row; /* Change from row-reverse to row */
 }
 .calendar-cell {
     flex: 1;
@@ -368,6 +430,124 @@ h1, h2, h3, h4, h5, h6 {
 }
 .calendar-back-btn:hover {
     background: #cccccc;
+}
+
+/* Event Popup Styles */
+.event-popup-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s, visibility 0.3s;
+}
+
+.event-popup-overlay.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+.event-popup {
+    background: white;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    transform: translateY(20px);
+    transition: transform 0.3s;
+    direction: rtl;
+    padding: 24px;
+    position: relative;
+}
+
+.event-popup-overlay.active .event-popup {
+    transform: translateY(0);
+}
+
+.event-popup-close {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #666;
+}
+
+.event-popup-close:hover {
+    color: #000;
+}
+
+.event-popup-title {
+    font-size: 24px;
+    font-weight: bold;
+    color: #0000FF;
+    margin-bottom: 16px;
+    text-align: center;
+}
+
+.event-popup-client {
+    font-size: 20px;
+    color: #333;
+    margin-bottom: 16px;
+    text-align: center;
+}
+
+.event-popup-time {
+    font-size: 18px;
+    color: #555;
+    margin-bottom: 16px;
+    text-align: center;
+}
+
+.event-popup-details {
+    margin-top: 16px;
+}
+
+.event-popup-detail {
+    margin-bottom: 12px;
+    display: flex;
+    align-items: flex-start;
+}
+
+.event-popup-label {
+    font-weight: bold;
+    color: #0000FF;
+    min-width: 100px;
+    margin-left: 12px;
+}
+
+.event-popup-value {
+    flex: 1;
+    color: #333;
+}
+
+.event-popup-attendees {
+    margin-top: 4px;
+}
+
+.event-popup-attendee {
+    padding: 2px 0;
+}
+
+/* Make calendar events clickable */
+.calendar-event {
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.calendar-event:hover {
+    background-color: #d0d0d0;
 }
 
 .billing-container {

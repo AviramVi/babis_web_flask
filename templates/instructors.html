@@ -4,8 +4,84 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .sort-icon {
+            position: absolute;
+            right: 0.5em;
+            top: 50%;
+            transform: translateY(-50%);
+            opacity: 0;
+            transition: transform 0.2s, opacity 0.2s;
+            font-size: 0.8em;
+            color: #555;
+        }
+        
+        th.sort-asc .sort-icon,
+        th.sort-desc .sort-icon {
+            opacity: 1;
+        }
+        
+        th.sort-asc .sort-icon {
+            transform: translateY(-50%) rotate(0deg);
+        }
+        
+        th.sort-desc .sort-icon {
+            transform: translateY(-50%) rotate(180deg);
+        }
+        
+        th.sortable {
+            cursor: pointer;
+            position: relative;
+            padding-right: 2em; /* Increased padding to accommodate the arrow */
+            white-space: nowrap; /* Prevent text wrapping */
+        }
+    </style>
     <title>Instructors</title>
     <style>
+        /* Header Cell Sorting Styles */
+        .header-cell {
+            cursor: pointer;
+            position: relative;
+            padding-right: 20px;
+            user-select: none;
+        }
+        
+        .header-cell:hover {
+            background-color: #e6e6e6;
+        }
+        
+        .sort-arrow {
+            position: absolute;
+            right: 5px;
+            transition: opacity 0.2s;
+        }
+        
+        .header-cell[data-sort-direction] {
+            background-color: #f0f0f0;
+            font-weight: bold;
+        }
+
+        /* Notification Styles */
+        .notification {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #4CAF50;
+            color: white;
+            padding: 15px 25px;
+            border-radius: 4px;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+            pointer-events: none;
+        }
+
+        .notification.show {
+            opacity: 1;
+        }
+
         /* Modal Styles */
         .instructor-modal {
             display: none;
@@ -120,6 +196,7 @@
             cursor: pointer;
         }
     </style>
+    <div id="notification" class="notification"></div>
 </head>
 <body>
     {% extends 'base.html' %}
@@ -132,17 +209,17 @@
             <table class="instructors-table">
                 <thead>
                     <tr>
-                        <th class="header-cell index-column">#</th>
-                        <th class="header-cell">שם</th>
-                        <th class="header-cell">טלפון</th>
-                        <th class="header-cell">מייל</th>
-                        <th class="header-cell">התמחויות</th>
-                        <th class="header-cell">הערות</th>
+                        <th class="header-cell index-column sortable" data-sort="index">#</th>
+                        <th class="header-cell sortable" data-sort="name">שם</th>
+                        <th class="header-cell sortable" data-sort="phone">טלפון</th>
+                        <th class="header-cell sortable" data-sort="email">מייל</th>
+                        <th class="header-cell sortable" data-sort="skills">התמחויות</th>
+                        <th class="header-cell sortable" data-sort="notes">הערות</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for instructor in instructors %}
-                    <tr data-row-index="{{ loop.index }}" data-instructor-id="{{ loop.index0 }}">
+                    <tr data-row-index="{{ loop.index }}" data-instructor-id="{{ loop.index0 }}" data-sheet-row="{{ instructor.sheet_row }}" {% if instructor['פעיל'] and instructor['פעיל'].strip() == 'לא פעיל' %}style="text-decoration: line-through; color: #888;"{% endif %}>
                         <td class="index-column">{{ loop.index }}</td>
                         <td class="clickable-cell">{{ instructor.שם }}</td>
                         <td><a href="tel:{{ instructor.טלפון }}" class="phone-link">{{ instructor.טלפון }}</a></td>
@@ -169,6 +246,7 @@
             <form id="instructorForm">
                 <input type="hidden" id="instructorIndex" name="instructorIndex" value="">
                 <input type="hidden" id="rowIndex" name="rowIndex" value="">
+                <input type="hidden" id="sheetRow" name="sheetRow" value="">
                 
                 <div class="form-group">
                     <label for="instructorName">שם</label>
@@ -210,13 +288,51 @@
 
     <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // Get all instructors data from the server
+        // Initialize table sorting
+        const table = document.querySelector('.instructors-table');
+        if (table) {
+            new SortableTable(table, {
+                sortBy: 1, // Default sort by name column
+                sortOrder: 'asc',
+                headerClass: 'sortable',
+                sortFunction: function(cellA, cellB, columnIndex, sortOrder) {
+                    const aText = cellA.textContent.trim();
+                    const bText = cellB.textContent.trim();
+                    
+                    // Try to compare as numbers if possible
+                    const aNum = parseFloat(aText.replace(/[^\d.-]/g, ''));
+                    const bNum = parseFloat(bText.replace(/[^\d.-]/g, ''));
+                    
+                    if (!isNaN(aNum) && !isNaN(bNum)) {
+                        return sortOrder === 'asc' ? aNum - bNum : bNum - aNum;
+                    }
+                    
+                    // Fall back to string comparison with Hebrew locale
+                    return sortOrder === 'asc' ? 
+                        aText.localeCompare(bText, 'he') : 
+                        bText.localeCompare(aText, 'he');
+                }
+            });
+        }
+
         const instructorsData = JSON.parse('{{ instructors|tojson|safe }}');
         const modal = document.getElementById('instructorModal');
         const form = document.getElementById('instructorForm');
         const closeButton = document.querySelector('.close-button');
         const cancelButton = document.querySelector('.cancel-btn');
         
+        // Add keyboard event listeners
+        document.addEventListener('keydown', function(event) {
+            if (modal.style.display === 'flex') {
+                if (event.key === 'Escape') {
+                    closeModal();
+                } else if (event.key === 'Enter' && !event.shiftKey && !event.target.matches('textarea')) {
+                    event.preventDefault();
+                    form.dispatchEvent(new Event('submit'));
+                }
+            }
+        });
+
         // Add event listeners to clickable cells
         document.querySelectorAll('.clickable-cell').forEach(cell => {
             cell.addEventListener('click', function() {
@@ -227,7 +343,17 @@
             });
         });
         
-        // Close modal functions
+        function showNotification(message) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.classList.add('show');
+            
+            // Hide after 2 seconds
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 2000);
+        }
+
         function closeModal() {
             modal.style.display = 'none';
         }
@@ -241,58 +367,138 @@
             }
         });
         
-        // Open modal with instructor data
         function openInstructorModal(instructorId, rowIndex) {
             const instructor = instructorsData[instructorId];
+            if (!instructor) {
+                console.error('Instructor data not found:', instructorId);
+                return;
+            }
+
+            console.log('Instructor data:', JSON.stringify(instructor, null, 2));
+            console.log('All instructor data keys:', Object.keys(instructor));
             
             document.getElementById('instructorIndex').value = instructorId;
             document.getElementById('rowIndex').value = rowIndex;
+            document.getElementById('sheetRow').value = instructor['sheet_row'];
             document.getElementById('instructorName').value = instructor['שם'] || '';
             document.getElementById('instructorPhone').value = instructor['טלפון'] || '';
             document.getElementById('instructorEmail').value = instructor['מייל'] || '';
             document.getElementById('instructorSpecialization').value = instructor['התמחויות'] || '';
             document.getElementById('instructorNotes').value = instructor['הערות'] || '';
+
+            // Debug the status field
+            const statusValue = instructor['פעיל'] || '';
+            console.log('Status value from data:', JSON.stringify(statusValue));
+            console.log('Status value type:', typeof statusValue);
+            console.log('Trimmed status value:', JSON.stringify(statusValue.trim()));
+            console.log('Comparison with "לא פעיל":', statusValue.trim() === 'לא פעיל');
             
-            // Set active checkbox based on status column
-            const isActive = instructor['סטטוס'] !== 'לא פעיל';
+            // Set checkbox state - checked if status is NOT 'לא פעיל'
+            const isActive = statusValue.trim() !== 'לא פעיל';
+            console.log('Setting checkbox to checked:', isActive);
             document.getElementById('instructorActive').checked = isActive;
-            
+
             modal.style.display = 'flex';
         }
         
-        // Submit form handler
+        // Add event listener for 'הוספת מדריך' button
+        document.querySelector('.add-instructor').addEventListener('click', function() {
+            // Clear modal fields
+            document.getElementById('instructorIndex').value = '';
+            document.getElementById('rowIndex').value = '';
+            document.getElementById('sheetRow').value = '';
+            document.getElementById('instructorName').value = '';
+            document.getElementById('instructorPhone').value = '';
+            document.getElementById('instructorEmail').value = '';
+            document.getElementById('instructorSpecialization').value = '';
+            document.getElementById('instructorNotes').value = '';
+            document.getElementById('instructorActive').checked = true;
+            modal.style.display = 'flex';
+        });
+
+        // Patch form submit to handle add mode
         form.addEventListener('submit', function(event) {
             event.preventDefault();
-            
             const instructorId = document.getElementById('instructorIndex').value;
-            const rowIndex = document.getElementById('rowIndex').value;
-            
+            const sheetRow = document.getElementById('sheetRow').value;
+            const isAdd = !sheetRow;
             const updatedData = {
                 שם: document.getElementById('instructorName').value,
                 טלפון: document.getElementById('instructorPhone').value,
                 מייל: document.getElementById('instructorEmail').value,
                 התמחויות: document.getElementById('instructorSpecialization').value,
                 הערות: document.getElementById('instructorNotes').value,
-                סטטוס: document.getElementById('instructorActive').checked ? 'פעיל' : 'לא פעיל'
+                'פעיל': document.getElementById('instructorActive').checked ? '' : 'לא פעיל'
             };
+            if (isAdd) {
+                fetch('/add_instructor', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ data: updatedData })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Add new row to table
+                        const tbody = document.querySelector('.instructors-table tbody');
+                        const newRow = document.createElement('tr');
+                        const newIndex = tbody.rows.length + 1;
+                        newRow.setAttribute('data-row-index', newIndex);
+                        newRow.setAttribute('data-instructor-id', instructorsData.length);
+                        newRow.setAttribute('data-sheet-row', data.sheet_row || '');
+                        if (updatedData['פעיל'] === 'לא פעיל') {
+                            newRow.style.textDecoration = 'line-through';
+                            newRow.style.color = '#888';
+                        }
+                        newRow.innerHTML = `
+                            <td class="index-column">${newIndex}</td>
+                            <td class="clickable-cell">${updatedData.שם}</td>
+                            <td><a href="tel:${updatedData.טלפון}" class="phone-link">${updatedData.טלפון}</a></td>
+                            <td><a href="mailto:${updatedData.מייל}" class="email-link">${updatedData.מייל}</a></td>
+                            <td class="clickable-cell">${updatedData.התמחויות}</td>
+                            <td class="clickable-cell">${updatedData.הערות}</td>
+                        `;
+                        // Add click events to new clickable cells
+                        newRow.querySelectorAll('.clickable-cell').forEach(cell => {
+                            cell.addEventListener('click', function() {
+                                const row = this.parentElement;
+                                const instructorId = parseInt(row.dataset.instructorId);
+                                const rowIndex = parseInt(row.dataset.rowIndex);
+                                openInstructorModal(instructorId, rowIndex);
+                            });
+                        });
+                        tbody.appendChild(newRow);
+                        // Add to local data
+                        instructorsData.push({ ...updatedData, sheet_row: data.sheet_row });
+                        closeModal();
+                        showNotification('המדריך נוסף בהצלחה');
+                    } else {
+                        alert('שגיאה בהוספת מדריך. אנא נסו שנית.');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('שגיאה בהוספת מדריך. אנא נסו שנית.');
+                });
+                return;
+            }
             
-            // Send data to server
             fetch('/update_instructor', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    index: parseInt(instructorId) + 2, // +2 because Google Sheets is 1-indexed and has headers
+                    sheet_row: parseInt(sheetRow),
                     data: updatedData
                 })
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    // Update the table row with new data
                     const row = document.querySelector(`tr[data-instructor-id="${instructorId}"]`);
                     if (row) {
+                        // Update row content
                         row.cells[1].textContent = updatedData.שם;
                         row.cells[2].querySelector('a').textContent = updatedData.טלפון;
                         row.cells[2].querySelector('a').href = `tel:${updatedData.טלפון}`;
@@ -300,15 +506,21 @@
                         row.cells[3].querySelector('a').href = `mailto:${updatedData.מייל}`;
                         row.cells[4].textContent = updatedData.התמחויות;
                         row.cells[5].textContent = updatedData.הערות;
+
+                        // Update row styling based on active status
+                        if (updatedData['פעיל'] === 'לא פעיל') {
+                            row.style.textDecoration = 'line-through';
+                            row.style.color = '#888';
+                        } else {
+                            row.style.textDecoration = 'none';
+                            row.style.color = '';
+                        }
                     }
                     
-                    // Update the local data
+                    // Update the data in memory
                     instructorsData[instructorId] = updatedData;
-                    
-                    // Close the modal
                     closeModal();
-                    
-                    alert('המדריך עודכן בהצלחה!');
+                    showNotification('המדריך עודכן בהצלחה');
                 } else {
                     alert('שגיאה בעדכון המדריך. אנא נסו שנית.');
                 }
@@ -320,6 +532,8 @@
         });
     });
     </script>
+    <script src="{{ url_for('static', filename='js/sorting.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/instructors.js') }}"></script>
     {% endblock %}
 </body>
 </html>

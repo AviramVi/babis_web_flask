@@ -5,23 +5,617 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>calendar</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        /* Simple popup styles */
+        #simplePopup {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0,0,0,0.7);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        
+        .popup-content {
+            background: white;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            padding: 24px;
+            position: relative;
+            max-height: 90vh;
+            overflow-y: auto;
+            direction: rtl;
+        }
+        
+        /* Inline styles for the popup to ensure it works */
+        #eventPopup {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #eventPopup.active {
+            display: flex !important;
+        }
+        
+        .event-popup {
+            background: white;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            padding: 24px;
+            position: relative;
+            max-height: 90vh;
+            overflow-y: auto;
+            direction: rtl;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        
+        .event-popup-close {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+        }
+        
+        .event-popup-title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #0000FF;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        
+        .event-popup-client {
+            font-size: 20px;
+            color: #333;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        
+        .event-popup-time {
+            font-size: 18px;
+            color: #555;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        
+        .event-popup-details {
+            margin-top: 16px;
+        }
+        
+        .event-popup-detail {
+            margin-bottom: 12px;
+            display: flex;
+            align-items: flex-start;
+        }
+        
+        .event-popup-label {
+            font-weight: bold;
+            color: #0000FF;
+            min-width: 100px;
+            margin-left: 12px;
+        }
+        
+        .event-popup-value {
+            flex: 1;
+            color: #333;
+        }
+        
+        .event-popup-attendees {
+            margin-top: 4px;
+        }
+        
+        .event-popup-attendee {
+            padding: 2px 0;
+        }
+        
+        /* Make calendar events clickable */
+        .calendar-event {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .calendar-event:hover {
+            background-color: #d0d0d0;
+        }
+        
+        /* Test button style */
+        .test-popup-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 9999;
+            padding: 10px 20px;
+            background: #0000FF;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+    </style>
+    <script>
+        // Simple popup functions defined in the head to ensure they're available globally
+        function handleEventClick(element, eventDataJson) {
+            try {
+                const eventData = JSON.parse(eventDataJson);
+                console.log('Event clicked with data:', eventData);
+                showSimpleEventPopup(eventDataJson); // MODIFIED: Call the new simple popup function
+            } catch (error) {
+                console.error('Error parsing event data:', error, eventDataJson);
+                alert('שגיאה בהצגת פרטי האירוע');
+            }
+        }
+        
+        function showPopup(eventData) {
+            // Fill in popup content
+            document.getElementById('popupTitle').textContent = eventData.title || 'אין כותרת';
+            document.getElementById('popupClient').textContent = 'לקוח: ' + (eventData.client_name || 'לא צוין');
+            
+            // Format time
+            let timeStr = '';
+            if (eventData.start) {
+                const date = new Date(eventData.start);
+                timeStr = date.toLocaleString('he-IL');
+            }
+            document.getElementById('popupTime').textContent = timeStr;
+            
+            // Location
+            document.getElementById('popupLocation').textContent = eventData.location || 'לא צוין מיקום';
+            
+            // Description
+            const descContainer = document.getElementById('popupDescriptionContainer');
+            document.getElementById('popupDescription').textContent = eventData.description || '';
+            descContainer.style.display = eventData.description ? 'flex' : 'none';
+            
+            // Attendees
+            const attendeesContainer = document.getElementById('popupAttendeesContainer');
+            const attendeesEl = document.getElementById('popupAttendees');
+            
+            if (eventData.attendees && eventData.attendees.length > 0) {
+                attendeesEl.innerHTML = '';
+                eventData.attendees.forEach(function(email) {
+                    const div = document.createElement('div');
+                    div.className = 'event-popup-attendee';
+                    div.textContent = email;
+                    attendeesEl.appendChild(div);
+                });
+                attendeesContainer.style.display = 'flex';
+            } else {
+                attendeesContainer.style.display = 'none';
+            }
+            
+            // Show popup
+            document.getElementById('eventPopup').classList.add('active');
+        }
+        
+        function closePopup() {
+            document.getElementById('eventPopup').classList.remove('active');
+        }
+        
+        function testPopup() {
+            const testEvent = {
+                title: 'אירוע בדיקה',
+                start: new Date().toISOString(),
+                description: 'זהו הודעת בדיקה כדי לוודא שהפופאפ עובד',
+                location: 'מיקום בדיקה',
+                attendees: ['test1@example.com', 'test2@example.com'],
+                client_name: 'לקוח בדיקה'
+            };
+            showPopup(testEvent);
+        }
+        
+        // Add event handlers when page is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            // Close popup when clicking outside content
+            const popup = document.getElementById('eventPopup');
+            if (popup) {
+                popup.addEventListener('click', function(e) {
+                    if (e.target === this) closePopup();
+                });
+            }
+            
+            // Close on escape key
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    closePopup();
+                    cancelCalendarEventHoverPopup();
+                }
+            });
+            
+            // Handle window resize
+            window.addEventListener('resize', function() {
+                if (lastHoveredElement) {
+                    updatePopupPosition(lastHoveredElement);
+                }
+            });
+            
+            // Initialize hover popup container if it doesn't exist
+            if (!document.getElementById('hoverEventPopup')) {
+                const popup = document.createElement('div');
+                popup.id = 'hoverEventPopup';
+                popup.style.position = 'fixed';
+                popup.style.background = 'white';
+                popup.style.padding = '10px';
+                popup.style.border = '1px solid #ccc';
+                popup.style.borderRadius = '5px';
+                popup.style.boxShadow = '0 2px 10px rgba(0,0,0,0.1)';
+                popup.style.zIndex = '1000';
+                popup.style.display = 'none';
+                document.body.appendChild(popup);
+            }
+            
+            console.log('Event popup handlers initialized');
+        });
+
+        // --- Hover Popup Logic ---
+        let hoverPopupTimeout = null;
+        let lastHoveredEvent = null;
+        let lastHoveredElement = null;
+        
+        // Update popup position on scroll
+        window.addEventListener('scroll', function() {
+            if (lastHoveredElement) {
+                updatePopupPosition(lastHoveredElement);
+            }
+        }, { passive: true });
+        
+        function updatePopupPosition(eventElem) {
+            const popup = document.getElementById('hoverEventPopup');
+            if (!popup || !eventElem) return;
+            
+            const popupWidth = 220;
+            const popupHeight = 120;
+            const padding = 8;
+            
+            try {
+                // Get the cell's position relative to viewport
+                const rect = eventElem.getBoundingClientRect();
+                const viewportWidth = window.innerWidth;
+                const viewportHeight = window.innerHeight;
+                
+                // Calculate positions for both left and right sides
+                const leftPosition = rect.left - popupWidth - padding;
+                const rightPosition = rect.right + padding;
+                
+                // Default to left side if there's enough space, otherwise use right
+                let left = leftPosition;
+                if (leftPosition < padding) {
+                    left = rightPosition;
+                    // If right side also goes off-screen, adjust to stay in view
+                    if (left + popupWidth > viewportWidth - padding) {
+                        left = viewportWidth - popupWidth - padding;
+                    }
+                }
+                
+                // Calculate top position - try to align with the top of the cell
+                let top = rect.top;
+                
+                // If popup would go below viewport, align with bottom of cell
+                if (top + popupHeight > viewportHeight - padding) {
+                    top = rect.bottom - popupHeight;
+                    // If still too tall, align with viewport bottom
+                    if (top < padding) {
+                        top = viewportHeight - popupHeight - padding;
+                    }
+                }
+                
+                // Ensure popup stays within viewport bounds
+                top = Math.max(padding, Math.min(top, viewportHeight - popupHeight - padding));
+                left = Math.max(padding, Math.min(left, viewportWidth - popupWidth - padding));
+                
+                // Apply the position
+                popup.style.top = `${top}px`;
+                popup.style.left = `${left}px`;
+                popup.style.position = 'fixed';
+                
+            } catch (error) {
+                console.error('Error updating popup position:', error);
+            }
+        }
+
+        function startCalendarEventHoverPopup(eventElem) {
+            cancelCalendarEventHoverPopup();
+            lastHoveredEvent = eventElem;
+            hoverPopupTimeout = setTimeout(() => {
+                // Hide any existing popup first
+                hideBlankHoverPopup();
+                // Small delay to ensure DOM updates
+                setTimeout(() => {
+                    showBlankHoverPopup(eventElem);
+                    // Force position update after content is rendered
+                    setTimeout(() => updatePopupPosition(eventElem), 10);
+                }, 10);
+            }, 300); // 0.1 second delay
+        }
+
+        function cancelCalendarEventHoverPopup() {
+            if (hoverPopupTimeout) {
+                clearTimeout(hoverPopupTimeout);
+                hoverPopupTimeout = null;
+            }
+            hideBlankHoverPopup();
+        }
+
+        function formatTime(dateTimeString) {
+            if (!dateTimeString) return '';
+            const date = new Date(dateTimeString);
+            return date.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function formatDuration(start, end) {
+            if (!start || !end) return '';
+            const startDate = new Date(start);
+            const endDate = new Date(end);
+            const diffMs = endDate - startDate;
+            
+            // Calculate hours with fractions (to 1 decimal place)
+            const diffHrs = diffMs / 3600000; // Convert ms to hours
+            const formattedHours = diffHrs.toFixed(1);
+            
+            // Remove trailing zero if it's a whole number
+            const displayHours = formattedHours.endsWith('.0') ? 
+                formattedHours.slice(0, -2) : formattedHours;
+            
+            return `${displayHours} שעות`;
+        }
+
+        function showBlankHoverPopup(eventElem) {
+            let popup = document.getElementById('hoverEventPopup');
+            if (!popup) {
+                // Create the popup element if it doesn't exist
+                popup = document.createElement('div');
+                popup.id = 'hoverEventPopup';
+                popup.style.position = 'fixed';
+                popup.style.background = 'white';
+                popup.style.padding = '10px';
+                popup.style.border = '1px solid #ccc';
+                popup.style.borderRadius = '5px';
+                popup.style.boxShadow = '0 2px 10px rgba(0,0,0,0.1)';
+                popup.style.zIndex = '1000';
+                popup.style.display = 'none';
+                document.body.appendChild(popup);
+                console.log('Created hover popup element');
+            }
+            
+            // Debug: Log all attributes of the event element
+            console.log('Event element attributes:');
+            for (let attr of eventElem.attributes) {
+                console.log(attr.name + ': ' + attr.value);
+            }
+            
+            // Hide popup temporarily while we update it
+            popup.style.display = 'none';
+            
+            // Get event data from data attributes
+            const eventData = {
+                title: eventElem.getAttribute('data-title') || 'ללא כותרת',
+                fullTitle: eventElem.getAttribute('data-full-title') || '',
+                organizer: eventElem.getAttribute('data-organizer') || 'ללא מדריך',
+                start: eventElem.getAttribute('data-start'),
+                end: eventElem.getAttribute('data-end'),
+                address: eventElem.getAttribute('data-address') || 'לא צוין מיקום',
+                creatorEmail: eventElem.getAttribute('data-creator-email') || 'לא צוין',
+            };
+            
+            // Format date for display
+            const formatDate = (dateStr) => {
+                if (!dateStr) return '';
+                const date = new Date(dateStr);
+                return date.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' });
+            };
+            
+            // Debug: Log the extracted event data
+            console.log('Extracted event data:', eventData);
+            
+            // Format times
+            const startTime = formatTime(eventData.start);
+            const endTime = formatTime(eventData.end);
+            const duration = formatDuration(eventData.start, eventData.end);
+            
+            // Create popup HTML
+            popup.innerHTML = `
+                <div style="padding: 12px; max-width: 200px; direction: rtl; text-align: right;">
+                    <div style="font-weight: bold; font-size: 16px; margin-bottom: 6px; color: #0000FF;">
+                        ${eventData.fullTitle || eventData.title}
+                    </div>
+                    <div style="font-size: 14px; margin-bottom: 4px; color: #555;">
+                        <span style="color: #0000FF; font-weight: bold;">מדריך:</span> ${eventData.organizer}
+                    </div>
+                    <div style="font-size: 14px; margin-bottom: 4px; color: #555;">
+                        <span style="color: #0000FF; font-weight: bold;">שעה:</span> ${startTime} - ${endTime}
+                    </div>
+                    <div style="font-size: 14px; margin-bottom: 4px; color: #555;">
+                        <span style="color: #0000FF; font-weight: bold;">משך:</span> ${duration}
+                    </div>
+                    ${eventData.address ? `
+                    <div style="font-size: 14px; color: #555; margin-top: 6px; border-top: 1px solid #eee; padding-top: 6px;">
+                        <span style="color: #0000FF; font-weight: bold;">מיקום:</span> ${eventData.address}
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+            
+            // Make popup visible and position it
+            lastHoveredElement = eventElem;
+            popup.style.display = 'block';
+            
+            // Force reflow to ensure dimensions are calculated
+            popup.offsetHeight;
+            
+            // Update position with no transition for initial placement
+            const originalTransition = popup.style.transition;
+            popup.style.transition = 'none';
+            updatePopupPosition(eventElem);
+            
+            // Re-enable transitions after a small delay
+            setTimeout(() => {
+                popup.style.transition = originalTransition || 'left 0.1s ease-out, top 0.1s ease-out';
+            }, 10);
+            
+            // Hide popup if mouse leaves popup itself
+            popup.onmouseleave = cancelCalendarEventHoverPopup;
+            // Prevent popup from closing if mouse enters popup
+            popup.onmouseenter = function() { 
+                if (hoverPopupTimeout) clearTimeout(hoverPopupTimeout); 
+            };
+        }
+
+        function hideBlankHoverPopup() {
+            const popup = document.getElementById('hoverEventPopup');
+            if (popup) {
+                popup.style.display = 'none';
+                lastHoveredElement = null;
+            }
+        }
+    </script>
 </head>
 <body>
     {% extends "base.html" %}
+    
+    <!-- Simple Popup HTML -->
+    <div id="simplePopup" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:9999;">
+            <div style="position:relative; background:white; padding:30px; border-radius:10px; width:90%; max-width:500px; direction:rtl; margin: 20px auto; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
+            <button onclick="closeSimplePopup()" style="position:absolute; left:10px; top:10px; background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
+            <h2 id="simplePopupTitle" style="text-align:center; color:#0000FF; margin-bottom:10px;"></h2>
+            <p id="simplePopupClientName" style="text-align:center; margin-bottom:8px;"></p>
+            <p id="simplePopupTime" style="text-align:center; margin-bottom:15px;"></p>
+            <div id="simplePopupLocation" style="margin-bottom:8px;"></div>
+            <div id="simplePopupDescription" style="margin-bottom:8px;"></div>
+            <div id="simplePopupAttendees">
+                <h4 style="margin: 10px 0 5px 0;">משתתפים:</h4>
+                <ul id="simplePopupAttendeesList" style="margin: 0; padding-right: 20px;"></ul>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Main function to show the simple event popup
+        function showSimpleEventPopup(eventDataJson) {
+            try {
+                console.log("showSimpleEventPopup called with JSON:", eventDataJson);
+                const eventData = JSON.parse(eventDataJson);
+                console.log("Parsed event data:", eventData);
+
+                document.getElementById('simplePopupTitle').textContent = eventData.title || 'אין כותרת';
+                document.getElementById('simplePopupClientName').textContent = eventData.client_name || 'לא צוין';
+
+                let timeStr = 'לא צוין';
+                const timeDataSource = eventData.start_time || eventData.start; // Prefer start_time, fallback to start
+                if (timeDataSource) {
+                    try {
+                        const date = new Date(timeDataSource);
+                        if (!isNaN(date)) {
+                            timeStr = date.toLocaleString('he-IL', {
+                                year: 'numeric', month: 'long', day: 'numeric',
+                                hour: '2-digit', minute: '2-digit'
+                            });
+                        } else {
+                            timeStr = timeDataSource; // Fallback to raw string if date is invalid
+                        }
+                    } catch (e) {
+                        console.error("Error parsing date:", timeDataSource, e);
+                        timeStr = timeDataSource; // Fallback to raw string on error
+                    }
+                }
+                document.getElementById('simplePopupTime').textContent = timeStr;
+
+                document.getElementById('simplePopupLocation').textContent = eventData.location || 'לא צוין מיקום';
+                
+                const descriptionEl = document.getElementById('simplePopupDescription');
+                descriptionEl.textContent = eventData.description || 'אין תיאור';
+                // Control visibility of description based on content
+                descriptionEl.style.display = (eventData.description && eventData.description.trim() !== '') ? 'block' : 'none';
+
+
+                const attendeesList = document.getElementById('simplePopupAttendeesList');
+                if (attendeesList) {
+                    attendeesList.innerHTML = ''; // Clear previous attendees
+                    if (eventData.attendees && eventData.attendees.length > 0) {
+                        eventData.attendees.forEach(attendee => {
+                            const li = document.createElement('li');
+                            // Attendee might be a string (email) or an object with an email property
+                            li.textContent = typeof attendee === 'string' ? attendee : (attendee.email || 'משתתף לא ידוע');
+                            attendeesList.appendChild(li);
+                        });
+                    } else {
+                        const li = document.createElement('li');
+                        li.textContent = 'אין משתתפים רשומים';
+                        attendeesList.appendChild(li);
+                    }
+                } else {
+                    console.error('Attendees list element not found!');
+                }
+
+                // Show the popup
+                const popupEl = document.getElementById('simplePopup'); // CORRECTED ID
+                if (popupEl) {
+                    popupEl.style.display = 'flex';
+                    console.log("Simple popup display set to flex for ID simplePopup");
+                } else {
+                    console.error('Popup element with ID "simplePopup" not found!');
+                }
+            } catch (error) {
+                 console.error('Error in showSimpleEventPopup:', error);
+                 console.error('Received eventDataJson was:', eventDataJson);
+                 alert('שגיאה בהצגת פרטי האירוע. אנא בדוק את הקונסול.');
+            }
+        }
+
+        function closeSimplePopup() {
+            document.getElementById('simplePopup').style.display = 'none';
+        }
+        
+        function testEventPopup() {
+            const testData = {
+                title: 'אירוע בדיקה',
+                client_name: 'לקוח בדיקה',
+                start: new Date().toISOString(),
+                location: 'מיקום בדיקה',
+                description: 'זהו תיאור לבדיקת הפופאפ החדש',
+                attendees: ['test1@example.com', 'test2@example.com']
+            };
+            showSimpleEventPopup(JSON.stringify(testData));
+        }
+        
+        // Close popup when clicking escape
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeSimplePopup();
+            }
+        });
+    </script>
     {% block content %}
     <div class="calendar-container">
-        <h1 class="calendar-title">לוח שנה</h1>
         <div class="calendar-header">
             <form method="get" style="display:inline;">
                 <input type="hidden" name="month" value="{{ month-1 if month > 1 else 12 }}">
                 <input type="hidden" name="year" value="{{ year if month > 1 else year-1 }}">
-                <button class="calendar-nav-btn" type="submit">&#x25C0;</button>
+                <button class="calendar-nav-btn" type="submit">&#x25B6;</button>
             </form>
-            <span class="calendar-month-label">חודש: {{ month_name }} {{ year }}</span>
+            <span class="calendar-month-label">{{ month_name }} {{ year }}</span>
             <form method="get" style="display:inline;">
                 <input type="hidden" name="month" value="{{ month+1 if month < 12 else 1 }}">
                 <input type="hidden" name="year" value="{{ year if month < 12 else year+1 }}">
-                <button class="calendar-nav-btn" type="submit">&#x25B6;</button>
+                <button class="calendar-nav-btn" type="submit">&#x25C0;</button>
             </form>
         </div>
         <div class="calendar-grid">
@@ -44,7 +638,18 @@
                     <div class="calendar-day-num">{{ day }}</div>
                     {% set events = events_by_day.get(day, []) %}
                     {% for event in events[:3] %}
-                        <div class="calendar-event">{{ event.time }} {{ event.title }}</div>
+                        <div class="calendar-event" 
+                             onclick="showSimpleEventPopup('{{ event.full_event | tojson | safe }}');"
+                             onmouseenter="startCalendarEventHoverPopup(this)"
+                             onmouseleave="cancelCalendarEventHoverPopup()"
+                             data-title="{{ event.title }}"
+                             data-full-title="{{ event.full_event.title or event.title }}"
+                             data-organizer="{{ event.organizer or 'לא צוין' }}"
+                             data-start="{{ event.full_event.start }}"
+                             data-end="{{ event.full_event.end }}"
+                             data-address="{{ event.full_event.location or '' }}">
+                            {{ event.time }} {{ event.title }}
+                        </div>
                     {% endfor %}
                     {% if events|length > 3 %}
                         <div class="calendar-event calendar-overflow">{{ day }} 🌷</div>
@@ -60,7 +665,68 @@
             <a href="{{ url_for('dashboard') }}"><button class="calendar-back-btn">חזרה</button></a>
         </div>
     </div>
+    
+    <!-- Blank Hover Popup HTML -->
+    <div id="hoverEventPopup" style="display:none; position:fixed; z-index:999999 !important; background:rgba(173, 216, 230, 0.95); border:2px solid #0000FF; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.2); width:220px; min-height:120px; color:#333; font-size:20px; text-align:center; justify-content:center; align-items:center; padding:20px 10px 10px 10px;"></div>
     {% endblock %}
+    <!-- Simple Event Popup HTML -->
+    <div id="eventPopup" class="event-popup-overlay">
+        <div class="event-popup">
+            <button onclick="closePopup()" class="event-popup-close">&times;</button>
+            <div id="popupTitle" class="event-popup-title"></div>
+            <div id="popupClient" class="event-popup-client"></div>
+            <div id="popupTime" class="event-popup-time"></div>
+            <div class="event-popup-details">
+                <div class="event-popup-detail">
+                    <div class="event-popup-label">מיקום:</div>
+                    <div id="popupLocation" class="event-popup-value"></div>
+                </div>
+                <div id="popupDescriptionContainer" class="event-popup-detail">
+                    <div class="event-popup-label">תיאור:</div>
+                    <div id="popupDescription" class="event-popup-value"></div>
+                </div>
+                <div id="popupAttendeesContainer" class="event-popup-detail">
+                    <div class="event-popup-label">משתתפים:</div>
+                    <div class="event-popup-value">
+                        <div id="popupAttendees" class="event-popup-attendees"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <button style="position:fixed; bottom:20px; right:20px; z-index:9999; background:#0000FF; color:white; padding:10px 20px; border:none; border-radius:5px; cursor:pointer;" onclick="testEventPopup()">בדוק פופאפ</button>
+
+    <script>
+        // Global close function for the popup
+        function closeEventPopup() {
+            const popup = document.getElementById('eventPopup');
+            if (popup) {
+                popup.style.display = 'none';
+                document.body.style.overflow = '';
+            }
+        }
+
+        // Add event handlers when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            // Close popup when clicking outside the content
+            const popup = document.getElementById('eventPopup');
+            if (popup) {
+                popup.addEventListener('click', function(e) {
+                    if (e.target === popup) {
+                        closeEventPopup();
+                    }
+                });
+            }
+            
+            // Close popup with Escape key
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    closeEventPopup();
+                }
+            });
+        });
+    </script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>

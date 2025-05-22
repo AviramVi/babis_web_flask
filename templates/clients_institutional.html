@@ -4,7 +4,62 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <title>Institutional Clients</title>
+    <style>
+        /* Sort icon styles */
+        .sort-icon {
+            position: absolute;
+            right: 0.5em;
+            top: 50%;
+            transform: translateY(-50%);
+            opacity: 0;
+            transition: transform 0.2s, opacity 0.2s;
+            font-size: 0.8em;
+            color: #555;
+        }
+        
+        th.sort-asc .sort-icon,
+        th.sort-desc .sort-icon {
+            opacity: 1;
+        }
+        
+        th.sort-asc .sort-icon {
+            transform: translateY(-50%) rotate(0deg);
+        }
+        
+        th.sort-desc .sort-icon {
+            transform: translateY(-50%) rotate(180deg);
+        }
+        
+        th.sortable {
+            cursor: pointer;
+            position: relative;
+            padding-right: 2em;
+            white-space: nowrap;
+        }
+        .header-cell {
+            cursor: pointer;
+            position: relative;
+            padding-right: 20px;
+            user-select: none;
+        }
+        
+        .header-cell:hover {
+            background-color: #e6e6e6;
+        }
+        
+        .sort-arrow {
+            position: absolute;
+            right: 5px;
+            transition: opacity 0.2s;
+        }
+        
+        .header-cell[data-sort-direction] {
+            background-color: #f0f0f0;
+            font-weight: bold;
+        }
+    </style>
 </head>
 <body>
     {% extends "base.html" %}
@@ -17,15 +72,18 @@
             <table class="clients-table" dir="rtl">
                 <thead>
                     <tr>
-                        <th class="header-cell index-column">#</th>
+                        <th class="header-cell sortable index-column">#</th>
                         {% for header in headers %}
-                            <th class="header-cell">{{ header }}</th>
+                            <th class="header-cell sortable">
+                                {{ header }}
+                                <i class="fas fa-arrow-up sort-icon"></i>
+                            </th>
                         {% endfor %}
                     </tr>
                 </thead>
                 <tbody>
                     {% for client in clients %}
-                    <tr>
+                    <tr data-row-index="{{ loop.index }}" {% if client['פעיל'] and client['פעיל'].strip() == 'לא פעיל' %}style="text-decoration: line-through; color: #888;"{% endif %}>
                         <td class="index-column">{{ loop.index }}</td>
                         {% for header in headers %}
                             <td>
@@ -49,6 +107,48 @@
             </a>
         </div>
     </div>
+    <script src="{{ url_for('static', filename='js/sorting.js') }}"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const table = document.querySelector('.clients-table');
+            if (table) {
+                new SortableTable(table, {
+                    sortBy: 1, // Default sort by name/organization column
+                    sortOrder: 'asc',
+                    headerClass: 'sortable',
+                    sortFunction: function(cellA, cellB, columnIndex, sortOrder) {
+                        const aText = cellA.textContent.trim();
+                        const bText = cellB.textContent.trim();
+                        
+                        // Try to compare as numbers if possible
+                        const aNum = parseFloat(aText.replace(/[^\d.-]/g, ''));
+                        const bNum = parseFloat(bText.replace(/[^\d.-]/g, ''));
+                        
+                        if (!isNaN(aNum) && !isNaN(bNum)) {
+                            return sortOrder === 'asc' ? aNum - bNum : bNum - aNum;
+                        }
+                        
+                        // Special handling for empty values
+                        if (aText === '' && bText !== '') return sortOrder === 'asc' ? -1 : 1;
+                        if (aText !== '' && bText === '') return sortOrder === 'asc' ? 1 : -1;
+                        if (aText === '' && bText === '') return 0;
+                        
+                        // Fall back to string comparison with Hebrew locale
+                        return sortOrder === 'asc' ? 
+                            aText.localeCompare(bText, 'he') : 
+                            bText.localeCompare(aText, 'he');
+                    },
+                    onSort: function(columnIndex, sortOrder) {
+                        // Update URL with sort parameters
+                        const url = new URL(window.location.href);
+                        url.searchParams.set('sort', columnIndex);
+                        url.searchParams.set('order', sortOrder);
+                        window.history.pushState({}, '', url);
+                    }
+                });
+            }
+        });
+    </script>
     {% endblock %}
 </body>
 </html>

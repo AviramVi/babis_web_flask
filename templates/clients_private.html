@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Private Clients</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         /* Notification Styles */
         .notification {
@@ -26,11 +27,61 @@
             opacity: 1;
         }
 
-        .notification.error {
-            background-color: #f44336;
+        /* Sort icon styles */
+        .sort-icon {
+            position: absolute;
+            right: 0.5em;
+            top: 50%;
+            transform: translateY(-50%);
+            opacity: 0;
+            transition: transform 0.2s, opacity 0.2s;
+            font-size: 0.8em;
+            color: #555;
         }
-
-        /* Modal Styles */
+        
+        th.sort-asc .sort-icon,
+        th.sort-desc .sort-icon {
+            opacity: 1;
+        }
+        
+        th.sort-asc .sort-icon {
+            transform: translateY(-50%) rotate(0deg);
+        }
+        
+        th.sort-desc .sort-icon {
+            transform: translateY(-50%) rotate(180deg);
+        }
+        
+        th.sortable {
+            cursor: pointer;
+            position: relative;
+            padding-right: 2em;
+            white-space: nowrap;
+        }
+        .header-cell {
+            cursor: pointer;
+            position: relative;
+            padding-right: 20px;
+            user-select: none;
+        }
+        
+        .header-cell:hover {
+            background-color: #e6e6e6;
+        }
+        
+        .sort-arrow {
+            position: absolute;
+            right: 5px;
+            transition: opacity 0.2s;
+        }
+        
+        .header-cell[data-sort-direction] {
+            background-color: #f0f0f0;
+            font-weight: bold;
+        }
+    </style>
+    <style>
+        /* Modal Styles (copied from instructors modal, adapted) */
         .client-modal {
             display: none;
             position: fixed;
@@ -44,7 +95,6 @@
             align-items: center;
             direction: rtl;
         }
-
         .client-modal-content {
             background-color: #f1f1f1;
             padding: 30px;
@@ -57,29 +107,24 @@
             gap: 15px;
             text-align: center;
         }
-
         .modal-header {
             text-align: center;
             color: #0099ff;
             font-size: 24px;
             margin-bottom: 10px;
         }
-
         .form-group {
             display: flex;
             flex-direction: column;
             margin-bottom: 15px;
             align-items: center;
         }
-
         .form-group label {
             margin-bottom: 5px;
             color: #0099ff;
             font-weight: bold;
         }
-
-
-        .form-group input, 
+        .form-group input,
         .form-group textarea {
             padding: 8px;
             border: 1px solid #ddd;
@@ -88,31 +133,26 @@
             text-align: center;
             width: 90%;
         }
-
         .form-group textarea {
             min-height: 80px;
             resize: vertical;
         }
-
         .checkbox-group {
             display: flex;
             align-items: center;
             gap: 10px;
             justify-content: center;
         }
-
         .checkbox-group input[type="checkbox"] {
             width: 20px;
             height: 20px;
         }
-
         .modal-buttons {
             display: flex;
             justify-content: center;
             gap: 10px;
             margin-top: 10px;
         }
-
         .modal-buttons button {
             padding: 8px 20px;
             border: none;
@@ -120,16 +160,13 @@
             cursor: pointer;
             font-size: 16px;
         }
-
         .save-btn {
             background-color: #0099ff;
             color: white;
         }
-
         .cancel-btn {
             background-color: #dddddd;
         }
-
         .close-button {
             position: absolute;
             top: 10px;
@@ -140,47 +177,77 @@
             cursor: pointer;
             color: #666;
         }
-
-
-        .clickable-cell {
-            cursor: pointer;
-        }
-        
-        .inactive-client {
-            text-decoration: line-through;
-            color: #888;
-        }
     </style>
 </head>
 <body>
     {% extends 'base.html' %}
 
     {% block content %}
+    <div id="notification" class="notification"></div>
     <div class="clients-container">
+
+        <!-- Modal for Add/Edit Client -->
+        <div id="clientModal" class="client-modal">
+            <div class="client-modal-content">
+                <button class="close-button" id="closeClientModal">&times;</button>
+                <div class="modal-header">לקוח פרטי</div>
+                <form id="clientForm">
+                    <input type="hidden" id="clientIndex">
+                    <input type="hidden" id="sheetRow">
+                    <div class="form-group">
+                        <label for="clientName">שם</label>
+                        <input type="text" id="clientName" name="שם" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="clientPhone">טלפון</label>
+                        <input type="text" id="clientPhone" name="טלפון" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="clientEmail">מייל</label>
+                        <input type="email" id="clientEmail" name="מייל">
+                    </div>
+                    <div class="form-group">
+                        <label for="clientSpecialNeed">צורך מיוחד</label>
+                        <textarea id="clientSpecialNeed" name="צורך מיוחד"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="clientNotes">הערות</label>
+                        <textarea id="clientNotes" name="הערות"></textarea>
+                    </div>
+                    <div class="checkbox-group">
+                        <label for="clientActive">פעיל</label>
+                        <input type="checkbox" id="clientActive" name="פעיל">
+                    </div>
+                    <div class="modal-buttons">
+                        <button type="submit" class="save-btn">שמור</button>
+                        <button type="button" class="cancel-btn" id="cancelClientModal">ביטול</button>
+                    </div>
+                </form>
+            </div>
+        </div>
         <h1 class="page-title">לקוחות פרטיים</h1>
         <div class="table-wrapper">
             <button class="add-client">הוספת לקוח פרטי</button>
             <table class="clients-table" dir="rtl">
                 <thead>
                     <tr>
-                        <th class="header-cell index-column">#</th>
-                        <th class="header-cell">שם</th>
-                        <th class="header-cell">טלפון</th>
-                        <th class="header-cell">מייל</th>
-                        <th class="header-cell">צורך מיוחד</th>
-                        <th class="header-cell">הערות</th>
+                        <th class="header-cell sortable index-column" data-sort="index">#</th>
+                        <th class="header-cell sortable" data-sort="name">שם</th>
+                        <th class="header-cell sortable" data-sort="phone">טלפון</th>
+                        <th class="header-cell sortable" data-sort="email">מייל</th>
+                        <th class="header-cell sortable" data-sort="special_need">צורך מיוחד</th>
+                        <th class="header-cell sortable" data-sort="notes">הערות</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for client in clients %}
-                    <tr data-client-id="{{ loop.index0 }}" data-row-index="{{ loop.index }}" data-sheet-row="{{ client.sheet_row }}" 
-                        {% if client['פעיל'] and client['פעיל'].strip() == 'לא פעיל' %}class="inactive-client"{% endif %}>
+                    <tr data-row-index="{{ loop.index }}" data-client-id="{{ loop.index0 }}" data-sheet-row="{{ loop.index + 1 }}" {% if client['פעיל'] and client['פעיל'].strip() == 'לא פעיל' %}style="text-decoration: line-through; color: #888;"{% endif %}>
                         <td class="index-column">{{ loop.index }}</td>
-                        <td class="clickable-cell">{{ client['שם'] }}</td>
+                        <td>{{ client['שם'] }}</td>
                         <td><a href="tel:{{ client['טלפון'] }}" class="phone-link">{{ client['טלפון'] }}</a></td>
                         <td><a href="mailto:{{ client['מייל'] }}" class="email-link">{{ client['מייל'] }}</a></td>
-                        <td class="clickable-cell">{{ client['צורך מיוחד'] }}</td>
-                        <td class="clickable-cell">{{ client['הערות'] }}</td>
+                        <td>{{ client['צורך מיוחד'] }}</td>
+                        <td>{{ client['הערות'] }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -193,60 +260,235 @@
         </div>
     </div>
 
-    <!-- Client Modal -->
-    <div class="client-modal" id="clientModal">
-        <div class="client-modal-content">
-            <button class="close-button">&times;</button>
-            <h2 class="modal-header">פרטי לקוח</h2>
-            <form id="clientForm">
-                <input type="hidden" id="clientIndex" name="clientIndex" value="">
-                <input type="hidden" id="rowIndex" name="rowIndex" value="">
-                <input type="hidden" id="sheetRow" name="sheetRow" value="">
-                
-                <div class="form-group">
-                    <label for="clientName">שם</label>
-                    <input type="text" id="clientName" name="שם" required>
-                </div>
-                
-                <div class="form-group">
-                    <label for="clientPhone">טלפון</label>
-                    <input type="tel" id="clientPhone" name="טלפון" required>
-                </div>
-                
-                <div class="form-group">
-                    <label for="clientEmail">מייל</label>
-                    <input type="email" id="clientEmail" name="מייל">
-                </div>
-                
-                <div class="form-group">
-                    <label for="clientSpecialNeed">צורך מיוחד</label>
-                    <input type="text" id="clientSpecialNeed" name="צורך מיוחד">
-                </div>
-                
-                <div class="form-group">
-                    <label for="clientNotes">הערות</label>
-                    <textarea id="clientNotes" name="הערות"></textarea>
-                </div>
-                
-                <div class="form-group">
-                    <div class="checkbox-group">
-                        <input type="checkbox" id="clientActive" name="active" checked>
-                        <label for="clientActive">פעיל</label>
-                    </div>
-                </div>
-                
-                <div class="modal-buttons">
-                    <button type="button" class="cancel-btn">ביטול</button>
-                    <button type="submit" class="save-btn">שמור</button>
-                </div>
-            </form>
-        </div>
-    </div>
+    <script src="{{ url_for('static', filename='js/sorting.js') }}"></script>
+    <script>
+        // Initialize table sorting
+        document.addEventListener('DOMContentLoaded', function() {
+            const table = document.querySelector('.clients-table');
+            if (table) {
+                new SortableTable(table, {
+                    sortBy: 1, // Default sort by name column
+                    sortOrder: 'asc',
+                    headerClass: 'sortable',
+                    sortFunction: function(cellA, cellB, columnIndex, sortOrder) {
+                        const aText = cellA.textContent.trim();
+                        const bText = cellB.textContent.trim();
+                        
+                        // Try to compare as numbers if possible
+                        const aNum = parseFloat(aText.replace(/[^\d.-]/g, ''));
+                        const bNum = parseFloat(bText.replace(/[^\d.-]/g, ''));
+                        
+                        if (!isNaN(aNum) && !isNaN(bNum)) {
+                            return sortOrder === 'asc' ? aNum - bNum : bNum - aNum;
+                        }
+                        
+                        // Fall back to string comparison with Hebrew locale
+                        return sortOrder === 'asc' ? 
+                            aText.localeCompare(bText, 'he') : 
+                            bText.localeCompare(aText, 'he');
+                    }
+                });
+            }
+        });
+    </script>
+    <script>
+        // Modal logic for private clients
+        document.addEventListener('DOMContentLoaded', function(){
+            const modal = document.getElementById('clientModal');
+            const closeButton = document.getElementById('closeClientModal');
+            const cancelButton = document.getElementById('cancelClientModal');
+            const form = document.getElementById('clientForm');
+            const addBtn = document.querySelector('.add-client');
+            const tbody = document.querySelector('.clients-table tbody');
 
-    <!-- Notification -->
-    <div id="notification" class="notification"></div>
+            // Store clients data in memory for easier manipulation
+            const clientsData = JSON.parse('{{ clients|tojson|safe }}');
 
-    <script src="{{ url_for('static', filename='js/clients_private.js') }}"></script>
+            // Helper to open modal, populate fields if data is given
+            function openClientModal(clientData, rowIndex) {
+                modal.style.display = 'flex';
+                document.body.style.overflow = 'hidden';
+                if (clientData) {
+                    // When editing an existing client, set proper indexes to identify it
+                    document.getElementById('clientIndex').value = rowIndex;
+                    document.getElementById('sheetRow').value = clientData['sheet_row'] || '';
+                    document.getElementById('clientName').value = clientData['שם'] || '';
+                    document.getElementById('clientPhone').value = clientData['טלפון'] || '';
+                    document.getElementById('clientEmail').value = clientData['מייל'] || '';
+                    document.getElementById('clientSpecialNeed').value = clientData['צורך מיוחד'] || '';
+                    document.getElementById('clientNotes').value = clientData['הערות'] || '';
+                    // פעיל: if 'לא פעיל' (column F), unchecked; else checked
+                    if (clientData['פעיל'] && clientData['פעיל'].trim() === 'לא פעיל') {
+                        document.getElementById('clientActive').checked = false;
+                    } else {
+                        document.getElementById('clientActive').checked = true;
+                    }
+                } else {
+                    // Clear fields for new client
+                    form.reset();
+                    document.getElementById('clientIndex').value = '';
+                    document.getElementById('sheetRow').value = '';
+                    document.getElementById('clientActive').checked = true;
+                }
+            }
+            function closeClientModal() {
+                modal.style.display = 'none';
+                document.body.style.overflow = '';
+            }
+            closeButton.addEventListener('click', closeClientModal);
+            cancelButton.addEventListener('click', closeClientModal);
+            window.addEventListener('click', function(event) {
+                if (event.target === modal) closeClientModal();
+            });
+            // Add button opens modal for new client
+            addBtn.addEventListener('click', function() {
+                openClientModal(null, null);
+            });
+            // Row click opens modal for edit
+            tbody.addEventListener('click', function(e) {
+                let tr = e.target.closest('tr');
+                if (!tr) return;
+                const rowIndex = parseInt(tr.rowIndex - 1); // adjust for header
+                
+                // Use the clientsData array instead of building from cells
+                // This ensures we have the same data source as the backend
+                if (rowIndex >= 0 && rowIndex < clientsData.length) {
+                    const clientData = clientsData[rowIndex];
+                    // Add the sheet_row explicitly since we need it for proper updating
+                    if (!clientData.sheet_row && tr.dataset.sheetRow) {
+                        clientData.sheet_row = tr.dataset.sheetRow;
+                    }
+                    openClientModal(clientData, rowIndex);
+                }
+            });
+            // Form submit: send data (AJAX or form submission logic)
+            form.addEventListener('submit', function(event) {
+                event.preventDefault();
+                const clientId = document.getElementById('clientIndex').value;
+                const sheetRow = document.getElementById('sheetRow').value;
+                const isAdd = !sheetRow;
+                const updatedData = {
+                    'שם': document.getElementById('clientName').value,
+                    'טלפון': document.getElementById('clientPhone').value,
+                    'מייל': document.getElementById('clientEmail').value,
+                    'צורך מיוחד': document.getElementById('clientSpecialNeed').value,
+                    'הערות': document.getElementById('clientNotes').value,
+                    'פעיל': document.getElementById('clientActive').checked ? '' : 'לא פעיל',
+                    'sheet_row': sheetRow
+                };
+
+                if (isAdd) {
+                    // Add new client
+                    fetch('/add_private_client', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ data: updatedData })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            // Add new row to table
+                            const tbody = document.querySelector('.clients-table tbody');
+                            const newRow = document.createElement('tr');
+                            const isActive = updatedData['פעיל'] !== 'לא פעיל';
+                            const newClientId = data.client_id || Date.now().toString();
+                            
+                            newRow.setAttribute('data-client-id', newClientId);
+                            newRow.setAttribute('data-sheet-row', data.sheet_row || '');
+                            
+                            if (!isActive) {
+                                newRow.style.textDecoration = 'line-through';
+                                newRow.style.color = '#888';
+                            }
+                            
+                            newRow.innerHTML = `
+                                <td class="index-column">${tbody.rows.length + 1}</td>
+                                <td>${updatedData.שם}</td>
+                                <td><a href="tel:${updatedData.טלפון}" class="phone-link">${updatedData.טלפון}</a></td>
+                                <td><a href="mailto:${updatedData.מייל}" class="email-link">${updatedData.מייל}</a></td>
+                                <td>${updatedData['צורך מיוחד']}</td>
+                                <td>${updatedData.הערות}</td>
+                            `;
+                            
+                            tbody.appendChild(newRow);
+                            closeClientModal();
+                            showNotification('הלקוח נוסף בהצלחה');
+                        } else {
+                            alert('שגיאה בהוספת לקוח. אנא נסו שנית.');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('שגיאה בהוספת לקוח. אנא נסו שנית.');
+                    });
+                    return;
+                }
+                
+                // Update existing client
+                fetch('/update_private_client', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sheet_row: sheetRow,
+                        data: updatedData
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // The clientId is the index in the table
+                        const index = parseInt(clientId);
+                        // Find the row with the matching sheet_row
+                        const row = document.querySelector(`tr[data-sheet-row="${sheetRow}"]`);
+                        
+                        if (row) {
+                            // Update row content
+                            row.cells[1].textContent = updatedData.שם;
+                            row.cells[2].innerHTML = `<a href="tel:${updatedData.טלפון}" class="phone-link">${updatedData.טלפון}</a>`;
+                            row.cells[3].innerHTML = `<a href="mailto:${updatedData.מייל}" class="email-link">${updatedData.מייל}</a>`;
+                            row.cells[4].textContent = updatedData['צורך מיוחד'];
+                            row.cells[5].textContent = updatedData.הערות;
+                            
+                            // Update row styling based on active status
+                            if (updatedData['פעיל'] === 'לא פעיל') {
+                                row.style.textDecoration = 'line-through';
+                                row.style.color = '#888';
+                            } else {
+                                row.style.textDecoration = '';
+                                row.style.color = '';
+                            }
+                            
+                            // Update the data in memory (like in the instructor modal)
+                            if (index >= 0 && index < clientsData.length) {
+                                clientsData[index] = {...updatedData};
+                            }
+                            
+                            closeClientModal();
+                            showNotification('השינויים נשמרו בהצלחה');
+                        }
+                    } else {
+                        alert('שגיאה בעדכון הלקוח. אנא נסו שנית.');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('שגיאה בעדכון הלקוח. אנא נסו שנית.');
+                });
+            });
+            
+            function showNotification(message) {
+                const notification = document.getElementById('notification');
+                notification.textContent = message;
+                notification.classList.add('show');
+                
+                // Hide after 2 seconds
+                setTimeout(() => {
+                    notification.classList.remove('show');
+                }, 2000);
+            }
+        });
+    </script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     {% endblock %}
 </body>
 </html>
