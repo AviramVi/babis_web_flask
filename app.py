@@ -303,17 +303,45 @@ def payments():
         selected_worksheet=selected_worksheet
     )
 
+@app.route('/money_out')
+def money_out():
+    worksheet_names = get_payment_worksheets()
+    selected_worksheet = request.args.get('worksheet', worksheet_names[0] if worksheet_names else None)
+    headers, records = fetch_payment_data(selected_worksheet)
+    desired_headers = ['מדריך', 'סהכ שעות', 'לפי לקוח', 'לקוח', 'שכר שעה', 'סיכום']
+    headers = desired_headers
+    return render_template(
+        'money_out.html',
+        headers=headers,
+        records=records,
+        worksheet_names=worksheet_names,
+        selected_worksheet=selected_worksheet
+    )
+
 @app.route('/billing')
 def billing():
     worksheet_names = get_billing_worksheets()
     selected_worksheet = request.args.get('worksheet', worksheet_names[0] if worksheet_names else None)
 
-    headers, billing_records = fetch_billing_data(selected_worksheet)
+    # Return empty records to show only headers with empty cells
     desired_headers = ['לקוח', 'סהכ שעות', 'לפי מדריך', 'מדריך', 'תמחור שעה', 'הנחה %', 'סיכום']
-
+    
     return render_template('billing.html',
                          headers=desired_headers,
-                         records=billing_records,
+                         records=[],
+                         worksheet_names=worksheet_names,
+                         selected_worksheet=selected_worksheet)
+
+@app.route('/money_in')
+def money_in():
+    worksheet_names = get_billing_worksheets()
+    selected_worksheet = request.args.get('worksheet', worksheet_names[0] if worksheet_names else None)
+    headers, records = fetch_billing_data(selected_worksheet)
+    desired_headers = ['לקוח', 'סהכ שעות', 'לפי מדריך', 'מדריך', 'תמחור שעה', 'הנחה %', 'סיכום']
+    
+    return render_template('money_in.html',
+                         headers=desired_headers,
+                         records=records,
                          worksheet_names=worksheet_names,
                          selected_worksheet=selected_worksheet)
 
