@@ -637,20 +637,132 @@ h1, h2, h3, h4, h5, h6 {
     box-shadow: 0 0 0 2px rgba(0,0,255,0.1);
 }
 
-@media (max-width: 900px) {
-    .dashboard-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
+/* Private Clients Page Notification Styles */
+.notification {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #4CAF50;
+    color: white;
+    padding: 15px 25px;
+    border-radius: 4px;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.5s ease-in-out;
+    pointer-events: none;
 }
 
-@media (max-width: 600px) {
-    .dashboard-grid {
-        grid-template-columns: 1fr;
-        gap: 12px;
-        padding: 10px;
-    }
-    .dashboard-card {
-        font-size: 1.1em;
-        padding: 18px 0;
-    }
+.notification.show {
+    opacity: 1;
+}
+
+/* Private Clients Modal Styles */
+.client-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+    direction: rtl;
+}
+
+.client-modal-content {
+    background-color: #f1f1f1;
+    padding: 30px;
+    border-radius: 10px;
+    width: 400px;
+    max-width: 90%;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    text-align: center;
+}
+
+.client-modal .modal-header {
+    text-align: center;
+    color: #0099ff;
+    font-size: 24px;
+    margin-bottom: 10px;
+}
+
+.client-modal .form-group {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 15px;
+    align-items: center;
+}
+
+.client-modal .form-group label {
+    margin-bottom: 5px;
+    color: #0099ff;
+    font-weight: bold;
+}
+
+.client-modal .form-group input,
+.client-modal .form-group textarea {
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 16px;
+    text-align: center;
+    width: 90%;
+}
+
+.client-modal .form-group textarea {
+    min-height: 80px;
+    resize: vertical;
+}
+
+.client-modal .checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: center;
+}
+
+.client-modal .checkbox-group input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+}
+
+.client-modal .modal-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.client-modal .modal-buttons button {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.client-modal .save-btn {
+    background-color: #0099ff;
+    color: white;
+}
+
+.client-modal .cancel-btn {
+    background-color: #dddddd;
+}
+
+.client-modal .close-button {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #666;
 }

@@ -159,20 +159,73 @@ def fetch_payment_data(worksheet_name=None):
     """Fetch payment data from a specific worksheet in the payments spreadsheet."""
     try:
         gc = get_gspread_client()
-        payment_spreadsheet_id = os.getenv('payment_SPREADSHEET_ID')
-        spreadsheet = gc.open_by_key(payment_spreadsheet_id)
-        if not worksheet_name:
-            worksheet_names = get_payment_worksheets()
-            worksheet_name = worksheet_names[0] if worksheet_names else None
-        if not worksheet_name:
-            return [], []
-        worksheet = spreadsheet.worksheet(worksheet_name)
+        payments_spreadsheet_id = os.getenv('payments_SPREADSHEET_ID')
+        
+        if worksheet_name:
+            worksheet = gc.open_by_key(payments_spreadsheet_id).worksheet(worksheet_name)
+        else:
+            worksheet = gc.open_by_key(payments_spreadsheet_id).sheet1
+        
+        # Get all records including headers
         all_values = worksheet.get_all_values()
-        if not all_values:
+        if not all_values or len(all_values) < 2:  # Need at least headers and one data row
             return [], []
-        headers = all_values[0]
-        records = [dict(zip(headers, row)) for row in all_values[1:]]
+            
+        headers = all_values[0]  # First row contains headers
+        records = [dict(zip(headers, row)) for row in all_values[1:]]  # Convert to dict
+        
         return headers, records
     except Exception as e:
         print(f"Error fetching payment data: {e}")
         return [], []
+
+def append_row(sheet_name, row_data):
+    """Append a new row to the specified worksheet.
+    
+    Args:
+        sheet_name: Name of the worksheet
+        row_data: List of values to append
+        
+    Returns:
+        The result of the append operation
+    """
+    try:
+        gc = get_gspread_client()
+        worksheet = gc.open_by_key(SPREADSHEET_ID).worksheet(sheet_name)
+        result = worksheet.append_row(row_data)
+        return result
+    except Exception as e:
+        print(f"Error appending row to {sheet_name}: {e}")
+        return None
+
+def update_row(sheet_name, row_number, updates):
+    """Update specific cells in a row.
+    
+    Args:
+        sheet_name: Name of the worksheet
+        row_number: Row number (1-indexed)
+        updates: Dictionary of {column_letter: value} pairs to update
+        
+    Returns:
+        The result of the update operation
+    """
+    try:
+        gc = get_gspread_client()
+        worksheet = gc.open_by_key(SPREADSHEET_ID).worksheet(sheet_name)
+        
+        # Convert column letters to A1 notation (e.g., {'A': 'value'} -> 'A2')
+        cell_updates = []
+        for col_letter, value in updates.items():
+            cell = f"{col_letter.upper()}{row_number}"
+            cell_updates.append({
+                'range': cell,
+                'values': [[value]]
+            })
+        
+        if cell_updates:
+            worksheet.batch_update(cell_updates)
+            return True
+        return False
+    except Exception as e:
+        print(f"Error updating row {row_number} in {sheet_name}: {e}")
+        return False

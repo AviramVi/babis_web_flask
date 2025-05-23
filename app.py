@@ -7,10 +7,12 @@ from utils.google_sheets import (
     update_instructor,
     add_instructor,
     get_sheet_data,
-    fetch_billing_data,  # Add this line
-    get_billing_worksheets,  # Add this line
+    fetch_billing_data,
+    get_billing_worksheets,
     get_payment_worksheets,
     fetch_payment_data,
+    append_row,
+    update_row
 )
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -109,6 +111,13 @@ def add_instructor_route():
 def clients_private():
     sheet_name = os.getenv("clients_private_SHEET_NAME")
     headers, clients = get_sheet_data(sheet_name)
+    
+    # Add sheet_row for persistent identification
+    for idx, client in enumerate(clients):
+        client['sheet_row'] = idx + 2  # +2 because 1 for header, and enumerate starts at 0
+        if 'פעיל' in client:
+            client['פעיל'] = client['פעיל'].strip() if client['פעיל'] else ''
+    
     return render_template('clients_private.html', headers=headers, clients=clients)
 
 @app.route('/add_private_client', methods=['POST'])
@@ -175,11 +184,108 @@ def update_private_client_route():
 def clients_institutional():
     sheet_name = os.getenv("clients_institutional_SHEET_NAME")
     headers, clients = get_sheet_data(sheet_name)
+    
+    # Add sheet_row to each client
+    for i, client in enumerate(clients, start=2):  # Start from 2 because of 1-based indexing and header row
+        client['sheet_row'] = i
+    
     # Arrange headers in the desired order
     desired_headers = ['גוף', 'איש קשר', 'טלפון', 'מייל', 'הערות']
-    # Filter only headers that exist in the worksheet
-    headers = [h for h in desired_headers if h in headers]
+    # Filter only headers that exist in the worksheet and are in our desired headers
+    headers = [h for h in desired_headers if h in headers and h in clients[0].keys()] if clients else desired_headers
+    
     return render_template('clients_institutional.html', headers=headers, clients=clients)
+
+@app.route('/add_institutional_client', methods=['POST'])
+def add_institutional_client_route():
+    try:
+        data = request.get_json()
+        print("Add client - Received data:", data)  # Debug log
+        
+        if not data:
+            return jsonify({'success': False, 'error': 'No data received'})
+        
+        # The data comes directly in the root of the JSON
+        client_data = data
+        
+        # Get the sheet name from environment variable
+        sheet_name = os.getenv("clients_institutional_SHEET_NAME")
+        if not sheet_name:
+            return jsonify({'success': False, 'error': 'Sheet name not configured'})
+        
+        # Prepare the row data in the correct order
+        row_data = [
+            client_data.get('ארגון', ''),  # Organization
+            client_data.get('איש קשר', ''),  # Contact person
+            client_data.get('טלפון', ''),  # Phone
+            client_data.get('מייל', ''),  # Email
+            client_data.get('הערות', ''),  # Notes
+            client_data.get('פעיל', '')   # Active status (empty string means active)
+        ]
+        
+        print("Add client - Row data to append:", row_data)  # Debug log
+        
+        # Add the new client to the sheet
+        result = append_row(sheet_name, row_data)
+        print("Add client - Append result:", result)  # Debug log
+        
+        if result:
+            return jsonify({'success': True, 'message': 'Client added successfully'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to add client'})
+    except Exception as e:
+        print(f"Error adding institutional client: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+@app.route('/update_institutional_client', methods=['POST'])
+def update_institutional_client_route():
+    try:
+        data = request.get_json()
+        print("Update client - Received data:", data)  # Debug log
+        
+        if not data:
+            return jsonify({'success': False, 'error': 'No data received'})
+            
+        sheet_row = data.get('sheet_row')
+        client_data = data  # The data comes directly in the root of the JSON
+        
+        if not sheet_row:
+            return jsonify({'success': False, 'error': 'Missing sheet_row parameter'})
+        
+        # Get the sheet name from environment variable
+        sheet_name = os.getenv("clients_institutional_SHEET_NAME")
+        if not sheet_name:
+            return jsonify({'success': False, 'error': 'Sheet name not configured'})
+        
+        # Map the fields to update with their column letters
+        updates = {}
+        field_mapping = {
+            'A': client_data.get('ארגון'),  # Column A: Organization
+            'B': client_data.get('איש קשר'),  # Column B: Contact Person
+            'C': client_data.get('טלפון'),  # Column C: Phone
+            'D': client_data.get('מייל'),  # Column D: Email
+            'E': client_data.get('הערות'),  # Column E: Notes
+            'F': client_data.get('פעיל')    # Column F: Active status
+        }
+        
+        # Only include non-None values
+        updates = {col: val for col, val in field_mapping.items() if val is not None}
+        
+        if not updates:
+            return jsonify({'success': False, 'error': 'No valid fields to update'})
+            
+        print(f"Update client - Updating row {sheet_row} with:", updates)  # Debug log
+        
+        # Update the client in the sheet
+        result = update_row(sheet_name, sheet_row, updates)
+        print("Update client - Result:", result)  # Debug log
+        
+        if result:
+            return jsonify({'success': True, 'message': 'Client updated successfully'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to update client'})
+    except Exception as e:
+        print(f"Error updating institutional client: {e}")
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/payments')
 def payments():
@@ -348,6 +454,52 @@ def calendar_page():
         events_by_day=events_by_day,
         today=date.today()
     )
+
+@app.route('/api/clients/<unique_id>', methods=['GET'])
+def get_client(unique_id):
+    sheet_name = os.getenv("clients_private_SHEET_NAME")
+    _, clients = get_sheet_data(sheet_name)
+    
+    # Find client by unique_id
+    client = next((c for c in clients if c.get('unique_id') == unique_id), None)
+    if not client:
+        return jsonify({'error': 'Client not found'}), 404
+        
+    return jsonify(client)
+
+@app.route('/api/clients/<unique_id>', methods=['PUT'])
+def update_client(unique_id):
+    sheet_name = os.getenv("clients_private_SHEET_NAME")
+    data = request.json
+    
+    try:
+        # Get current data
+        headers, clients = get_sheet_data(sheet_name)
+        
+        # Find client row index
+        client_index = next((idx for idx, c in enumerate(clients) 
+                           if c.get('unique_id') == unique_id), None)
+        
+        if client_index is None:
+            return jsonify({'error': 'Client not found'}), 404
+            
+        # Update sheet row (add 2 for header row and 0-based index)
+        sheet_row = client_index + 2
+        
+        # Create updates dictionary
+        updates = {
+            idx + 1: data.get(header, '')
+            for idx, header in enumerate(headers)
+        }
+        
+        # Update the sheet
+        update_instructor(sheet_name, sheet_row, updates)
+        
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        print(f"Error updating client: {e}")
+        return jsonify({'error': str(e)}), 500
 
 # Add instructor routes are implemented above
 

@@ -65,7 +65,48 @@
     {% extends "base.html" %}
 
     {% block content %}
+    <div id="notification" class="notification"></div>
     <div class="clients-container">
+        <!-- Modal for Add/Edit Institutional Client -->
+        <div id="clientModal" class="client-modal">
+            <div class="client-modal-content">
+                <button class="close-button" id="closeClientModal">&times;</button>
+                <div class="modal-header">לקוח מוסדי</div>
+                <form id="clientForm">
+                    <input type="hidden" id="sheetRow">
+                    <div class="form-group">
+                        <label for="clientOrg">גוף</label>
+                        <input type="text" id="clientOrg" name="ארגון" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="clientContact">איש קשר</label>
+                        <input type="text" id="clientContact" name="איש קשר" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="clientPhone">טלפון</label>
+                        <input type="text" id="clientPhone" name="טלפון" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="clientEmail">מייל</label>
+                        <input type="email" id="clientEmail" name="מייל">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="clientNotes">הערות</label>
+                        <textarea id="clientNotes" name="הערות"></textarea>
+                    </div>
+                    <div class="checkbox-group">
+                        <label for="clientActive">פעיל</label>
+                        <input type="checkbox" id="clientActive" name="פעיל" checked>
+                    </div>
+                    <div class="modal-buttons">
+                        <button type="submit" class="save-btn">שמור</button>
+                        <button type="button" class="cancel-btn" id="cancelClientModal">ביטול</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <h1 class="page-title">לקוחות מוסדיים</h1>
         <div class="table-wrapper">
             <button class="add-client">הוספת לקוח מוסדי</button>
@@ -83,7 +124,7 @@
                 </thead>
                 <tbody>
                     {% for client in clients %}
-                    <tr data-row-index="{{ loop.index }}" {% if client['פעיל'] and client['פעיל'].strip() == 'לא פעיל' %}style="text-decoration: line-through; color: #888;"{% endif %}>
+                    <tr class="client-row" data-sheet-row="{{ client.sheet_row }}" {% if client['פעיל'] and client['פעיל'].strip() == 'לא פעיל' %}style="text-decoration: line-through; color: #888;"{% endif %}>
                         <td class="index-column">{{ loop.index }}</td>
                         {% for header in headers %}
                             <td>
@@ -107,7 +148,11 @@
             </a>
         </div>
     </div>
+    <!-- Hidden element for client data -->
+    <script id="clientsData" type="application/json">{{ clients|tojson|safe }}</script>
+
     <script src="{{ url_for('static', filename='js/sorting.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/clients_institutional.js') }}"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             const table = document.querySelector('.clients-table');

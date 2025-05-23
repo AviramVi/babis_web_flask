@@ -1,51 +1,67 @@
-// Table sorting for clients_private.html
-
 document.addEventListener('DOMContentLoaded', function() {
-    const table = document.querySelector('.clients-table');
-    if (!table) return;
-    const thead = table.querySelector('thead');
-    const tbody = table.querySelector('tbody');
-    let sortDirection = {};
-
-    // Initialize sort functionality for each header
-    thead.querySelectorAll('th').forEach((th, colIdx) => {
-        if (colIdx === 0) return; // Skip index column
-        th.style.cursor = 'pointer';
-        th.addEventListener('click', function() {
-            sortTable(colIdx);
-        });
-    });
-
-    // Make table rows clickable to open edit modal
-    tbody.querySelectorAll('tr').forEach(row => {
-        row.addEventListener('click', function(e) {
-            // Don't trigger if clicking on a link (phone/email)
-            if (e.target.tagName === 'A') return;
-            
-            const clientId = this.dataset.clientId;
-            const rowIndex = this.dataset.rowIndex;
-            openClientModal(clientId, rowIndex);
-        });
-    });
+    // Get clients data from hidden element
+    let clientsData = [];
+    try {
+        const clientsDataElement = document.getElementById('clientsData');
+        if (clientsDataElement) {
+            clientsData = JSON.parse(clientsDataElement.textContent);
+        }
+    } catch (e) {
+        console.error('Error parsing clients data:', e);
+        clientsData = [];
+    }
 
     // Add new client button
     document.querySelector('.add-client')?.addEventListener('click', function() {
-        document.getElementById('clientForm').reset();
-        document.getElementById('clientIndex').value = '';
-        document.getElementById('rowIndex').value = '';
-        document.getElementById('sheetRow').value = '';
-        document.getElementById('clientActive').checked = true;
-        document.querySelector('.modal-header').textContent = 'הוספת לקוח חדש';
-        document.getElementById('clientModal').style.display = 'flex';
+        openClientModal(null, null);
     });
 
-    // Close modal when clicking outside content
+    // Make table rows clickable to open edit modal
+    const tbody = document.querySelector('.clients-table tbody');
+    if (tbody) {
+        tbody.addEventListener('click', function(e) {
+            // Don't trigger if clicking on a link (phone/email)
+            if (e.target.closest('a')) {
+                return; // Allow default link behavior for phone/email
+            }
+            
+            // Find the closest row that was clicked
+            const row = e.target.closest('tr.client-row');
+            if (!row) return;
+            
+            const sheetRow = row.dataset.sheetRow;
+            if (!sheetRow) return;
+            
+            // Find client data by sheet_row
+            const clientData = Array.isArray(clientsData) ? 
+                clientsData.find(client => client && client.sheet_row == sheetRow) : null;
+                
+            if (clientData) {
+                openClientModal(clientData, sheetRow);
+            } else {
+                // If no client data found, still open modal with basic info from the row
+                openClientModalFromRow(row);
+            }
+        });
+    }
+
+    // Modal close handlers
     const modal = document.getElementById('clientModal');
-    modal?.addEventListener('click', function(e) {
-        if (e.target === modal) {
-            closeModal();
-        }
-    });
+    if (modal) {
+        // Close when clicking outside content
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+
+        // Close with escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && modal.style.display === 'flex') {
+                closeModal();
+            }
+        });
+    }
 
     // Close modal with close button
     document.querySelector('.close-button')?.addEventListener('click', closeModal);
@@ -55,35 +71,71 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Form submission
     const form = document.getElementById('clientForm');
-    form?.addEventListener('submit', handleFormSubmit);
-
-    const clientsData = JSON.parse('{{ clients|tojson|safe }}');
-    
-    // Add event listeners to clickable cells
-    document.querySelectorAll('.clickable-cell').forEach(cell => {
-        cell.addEventListener('click', function() {
-            const row = this.parentElement;
-            const clientId = parseInt(row.dataset.clientId);
-            const rowIndex = parseInt(row.dataset.rowIndex);
-            openClientModal(clientId, rowIndex);
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            handleFormSubmit(e);
         });
-    });
-
-    function openClientModal(clientId, rowIndex) {
-        const client = clientsData[clientId];
-        
-        // Set form values
-        document.getElementById('clientIndex').value = clientId;
-        document.getElementById('rowIndex').value = rowIndex;
-        document.getElementById('clientName').value = client['שם'] || '';
-        document.getElementById('clientPhone').value = client['טלפון'] || '';
-        document.getElementById('clientEmail').value = client['מייל'] || '';
-        document.getElementById('clientSpecialties').value = client['התמחויות'] || '';
-        document.getElementById('clientNotes').value = client['הערות'] || '';
-        
-        modal.style.display = 'flex';
     }
 });
+
+function openClientModal(clientData, sheetRow) {
+    const modal = document.getElementById('clientModal');
+    const form = document.getElementById('clientForm');
+    
+    if (!modal || !form) return;
+    
+    // Reset form
+    form.reset();
+    
+    // Set sheet row value if provided
+    if (sheetRow) {
+        document.getElementById('sheetRow').value = sheetRow;
+    }
+    
+    // If client data is provided, populate the form
+    if (clientData) {
+        document.getElementById('clientName').value = clientData['שם'] || '';
+        document.getElementById('clientPhone').value = clientData['טלפון'] || '';
+        document.getElementById('clientEmail').value = clientData['מייל'] || '';
+        document.getElementById('clientSpecialNeed').value = clientData['צורך מיוחד'] || '';
+        document.getElementById('clientNotes').value = clientData['הערות'] || '';
+        
+        // Set active status
+        const isActive = !(clientData['פעיל'] && clientData['פעיל'].trim() === 'לא פעיל');
+        document.getElementById('clientActive').checked = isActive;
+        
+        document.querySelector('.modal-header').textContent = 'עריכת לקוח';
+    } else {
+        // For new client
+        document.getElementById('clientActive').checked = true;
+        document.querySelector('.modal-header').textContent = 'הוספת לקוח חדש';
+    }
+    
+    // Show the modal
+    modal.style.display = 'flex';
+    
+    // Focus on the first input field
+    const firstInput = form.querySelector('input:not([type="hidden"]), textarea');
+    if (firstInput) {
+        setTimeout(() => firstInput.focus(), 100);
+    }
+}
+
+function openClientModalFromRow(row) {
+    // Extract data from the row
+    const sheetRow = row.dataset.sheetRow;
+    const clientData = {
+        'שם': row.cells[1]?.textContent || '',
+        'טלפון': row.cells[2]?.textContent || '',
+        'מייל': row.cells[3]?.querySelector('a')?.textContent || '',
+        'צורך מיוחד': row.cells[4]?.textContent || '',
+        'הערות': row.cells[5]?.textContent || '',
+        'sheet_row': sheetRow,
+        'פעיל': row.style.textDecoration === 'line-through' ? 'לא פעיל' : ''
+    };
+    
+    openClientModal(clientData, sheetRow);
+}
 
 function sortTable(colIdx) {
     const table = document.querySelector('.clients-table');
@@ -127,28 +179,48 @@ function sortTable(colIdx) {
     });
 }
 
-function openClientModal(clientId, rowIndex) {
-    const row = document.querySelector(`tr[data-client-id="${clientId}"]`);
-    if (!row) return;
-    
+// Function to open modal with client data
+function openClientModal(clientData, sheetRow) {
+    const modal = document.getElementById('clientModal');
     const form = document.getElementById('clientForm');
+    
+    if (!modal || !form) return;
+    
+    // Reset form
     form.reset();
     
-    // Populate form fields from row data
-    document.getElementById('clientIndex').value = clientId;
-    document.getElementById('rowIndex').value = rowIndex;
-    document.getElementById('sheetRow').value = row.dataset.sheetRow;
-    document.getElementById('clientName').value = row.cells[1].textContent.trim();
-    document.getElementById('clientPhone').value = row.cells[2].textContent.trim();
-    document.getElementById('clientEmail').value = row.cells[3].querySelector('a')?.textContent.trim() || '';
-    document.getElementById('clientSpecialNeed').value = row.cells[4].textContent.trim();
-    document.getElementById('clientNotes').value = row.cells[5].textContent.trim();
+    // Set sheet row value if provided
+    if (sheetRow) {
+        document.getElementById('sheetRow').value = sheetRow;
+    }
     
-    // Set active status based on row class
-    document.getElementById('clientActive').checked = !row.classList.contains('inactive-client');
+    // If client data is provided, populate the form
+    if (clientData) {
+        document.getElementById('clientName').value = clientData['שם'] || '';
+        document.getElementById('clientPhone').value = clientData['טלפון'] || '';
+        document.getElementById('clientEmail').value = clientData['מייל'] || '';
+        document.getElementById('clientSpecialNeed').value = clientData['צורך מיוחד'] || '';
+        document.getElementById('clientNotes').value = clientData['הערות'] || '';
+        
+        // Set active status
+        const isActive = !(clientData['פעיל'] && clientData['פעיל'].trim() === 'לא פעיל');
+        document.getElementById('clientActive').checked = isActive;
+        
+        document.querySelector('.modal-header').textContent = 'עריכת לקוח';
+    } else {
+        // For new client
+        document.getElementById('clientActive').checked = true;
+        document.querySelector('.modal-header').textContent = 'הוספת לקוח חדש';
+    }
     
-    document.querySelector('.modal-header').textContent = 'עריכת פרטי לקוח';
-    document.getElementById('clientModal').style.display = 'flex';
+    // Show the modal
+    modal.style.display = 'flex';
+    
+    // Focus on the first input field
+    const firstInput = form.querySelector('input:not([type="hidden"]), textarea');
+    if (firstInput) {
+        setTimeout(() => firstInput.focus(), 100);
+    }
 }
 
 function closeModal() {
@@ -172,10 +244,10 @@ function showNotification(message, type = 'success') {
 async function handleFormSubmit(e) {
     e.preventDefault();
     
-    const form = e.target;
-    const clientId = document.getElementById('clientIndex').value;
+    const form = document.getElementById('clientForm');
+    const clientId = document.getElementById('sheetRow').value; // Using sheetRow as the ID
     const sheetRow = document.getElementById('sheetRow').value;
-    const isAdd = !sheetRow;
+    const isAdd = !sheetRow || sheetRow === 'new';
     
     const updatedData = {
         שם: document.getElementById('clientName').value,
@@ -231,7 +303,8 @@ async function handleFormSubmit(e) {
                 clientsData.push({ ...updatedData, sheet_row: result.sheet_row });
                 showNotification('הלקוח נוסף בהצלחה');
             } else {
-                alert('שגיאה בהוספת לקוח. אנא נסו שנית.');
+                console.error('Error adding client:', result.error);
+                alert('שגיאה בהוספת לקוח: ' + (result.error || 'אנא נסו שנית'));
             }
         } else {
             const response = await fetch('/update_private_client', {
@@ -271,7 +344,8 @@ async function handleFormSubmit(e) {
                 clientsData[clientId] = updatedData;
                 showNotification('הלקוח עודכן בהצלחה');
             } else {
-                alert('שגיאה בעדכון הלקוח. אנא נסו שנית.');
+                console.error('Error updating client:', result.error);
+                alert('שגיאה בעדכון הלקוח: ' + (result.error || 'אנא נסו שנית'));
             }
         }
     } catch (error) {
