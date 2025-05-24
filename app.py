@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 import os
 from dotenv import load_dotenv
 from utils.google_sheets import (
@@ -19,8 +19,14 @@ from googleapiclient.discovery import build
 import calendar as pycalendar
 import pytz
 from datetime import datetime, timedelta, date
+import os
+from google.oauth2.credentials import Credentials as OAuthCredentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+import pickle
 
 app = Flask(__name__)
+app.secret_key = os.urandom(24)  # Required for session
 load_dotenv()
 
 @app.route('/')
@@ -303,47 +309,386 @@ def payments():
         selected_worksheet=selected_worksheet
     )
 
-@app.route('/money_out')
-def money_out():
-    worksheet_names = get_payment_worksheets()
-    selected_worksheet = request.args.get('worksheet', worksheet_names[0] if worksheet_names else None)
-    headers, records = fetch_payment_data(selected_worksheet)
-    desired_headers = ['מדריך', 'סהכ שעות', 'לפי לקוח', 'לקוח', 'שכר שעה', 'סיכום']
-    headers = desired_headers
-    return render_template(
-        'money_out.html',
-        headers=headers,
-        records=records,
-        worksheet_names=worksheet_names,
-        selected_worksheet=selected_worksheet
-    )
+# Define Hebrew months for the billing dropdown
+HEBREW_MONTHS = [
+    {'value': '1', 'display': 'ינואר'},
+    {'value': '2', 'display': 'פברואר'},
+    {'value': '3', 'display': 'מרץ'},
+    {'value': '4', 'display': 'אפריל'},
+    {'value': '5', 'display': 'מאי'},
+    {'value': '6', 'display': 'יוני'},
+    {'value': '7', 'display': 'יולי'},
+    {'value': '8', 'display': 'אוגוסט'},
+    {'value': '9', 'display': 'ספטמבר'},
+    {'value': '10', 'display': 'אוקטובר'},
+    {'value': '11', 'display': 'נובמבר'},
+    {'value': '12', 'display': 'דצמבר'}
+]
 
 @app.route('/billing')
 def billing():
-    worksheet_names = get_billing_worksheets()
-    selected_worksheet = request.args.get('worksheet', worksheet_names[0] if worksheet_names else None)
-
-    # Return empty records to show only headers with empty cells
-    desired_headers = ['לקוח', 'סהכ שעות', 'לפי מדריך', 'מדריך', 'תמחור שעה', 'הנחה %', 'סיכום']
+    # Get current month and year
+    now = datetime.now()
+    current_month = now.month
+    current_year = now.year
     
+    # Get selected month and year from query parameters
+    try:
+        selected_month = int(request.args.get('month', current_month))
+        selected_year = int(request.args.get('year', current_year))
+    except (ValueError, TypeError):
+        selected_month = current_month
+        selected_year = current_year
+    
+    # Generate years for the dropdown (previous, current, next year)
+    years = [current_year - 1, current_year, current_year + 1]
+    
+    # Empty records - will be populated by client-side JavaScript
+    billing_records = []
+    
+    # Define headers
+    desired_headers = ['לקוח', 'סהכ שעות', 'לפי מדריך', 'מדריך', 'תמחור שעה', 'הנחה %', 'סיכום']
+
     return render_template('billing.html',
                          headers=desired_headers,
-                         records=[],
-                         worksheet_names=worksheet_names,
-                         selected_worksheet=selected_worksheet)
+                         records=billing_records,
+                         hebrew_months=HEBREW_MONTHS,
+                         current_month=current_month,
+                         current_year=current_year,
+                         selected_month=selected_month,
+                         selected_year=selected_year,
+                         years=years)
 
-@app.route('/money_in')
-def money_in():
-    worksheet_names = get_billing_worksheets()
-    selected_worksheet = request.args.get('worksheet', worksheet_names[0] if worksheet_names else None)
-    headers, records = fetch_billing_data(selected_worksheet)
-    desired_headers = ['לקוח', 'סהכ שעות', 'לפי מדריך', 'מדריך', 'תמחור שעה', 'הנחה %', 'סיכום']
+def get_client_names_from_sheets():
+    """Fetch client names from both private and institutional clients sheets."""
+    from utils.google_sheets import get_sheet_data
     
-    return render_template('money_in.html',
-                         headers=desired_headers,
-                         records=records,
-                         worksheet_names=worksheet_names,
-                         selected_worksheet=selected_worksheet)
+    try:
+        # Get private clients
+        private_clients_sheet = os.getenv("clients_private_SHEET_NAME", "לקוחות פרטיים")
+        _, private_clients = get_sheet_data(private_clients_sheet)
+        private_client_names = {client.get('שם', '').strip() for client in private_clients if client.get('שם').strip()}
+        
+        # Get institutional clients
+        institutional_clients_sheet = os.getenv("clients_institutional_SHEET_NAME", "לקוחות מוסדיים")
+        _, institutional_clients = get_sheet_data(institutional_clients_sheet)
+        institutional_client_names = {client.get('גוף', '').strip() for client in institutional_clients if client.get('גוף').strip()}
+        
+        # Combine all client names
+        all_client_names = private_client_names.union(institutional_client_names)
+        print(f"DEBUG: Found {len(all_client_names)} unique client names in sheets")
+        return all_client_names
+        
+    except Exception as e:
+        print(f"ERROR fetching client names: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return set()
+
+def create_instructors_map():
+    """Create a mapping of email usernames to full instructor names"""
+    try:
+        # Get the sheet name from environment variables or use a default
+        sheet_name = os.getenv("INSTRUCTORS_SHEET_NAME", "מדריכים")
+        instructors = fetch_instructors(sheet_name)
+        email_to_name = {}
+        for instructor in instructors:
+            email = instructor.get('מייל', '').strip()
+            if '@' in email:
+                username = email.split('@')[0]
+                email_to_name[username] = instructor.get('שם', username)
+        return email_to_name
+    except Exception as e:
+        print(f"Error creating instructors map: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {}
+
+@app.route('/api/billing')
+def get_billing_data():
+    print("DEBUG: /api/billing endpoint called")
+    try:
+        # Get month and year from query parameters
+        month = int(request.args.get('month', datetime.now().month))
+        year = int(request.args.get('year', datetime.now().year))
+        print(f"DEBUG: Requested month: {month}, year: {year}")
+        
+        # Get all valid client names from Google Sheets
+        valid_client_names = get_client_names_from_sheets()
+        print(f"DEBUG: Valid client names: {valid_client_names}")
+        
+        # Create instructor mapping
+        instructors_map = create_instructors_map()
+        
+        # Calculate the date range for the selected month (in local timezone)
+        local_tz = pytz.timezone('Asia/Jerusalem')
+        start_date = local_tz.localize(datetime(year, month, 1))
+        
+        if month == 12:
+            end_date = local_tz.localize(datetime(year + 1, 1, 1))
+        else:
+            end_date = local_tz.localize(datetime(year, month + 1, 1))
+        
+        print(f"DEBUG: Date range (local time): {start_date} to {end_date}")
+        
+        # Fetch events from Google Calendar
+        events = fetch_events_from_calendar(start_date, end_date)
+        print(f"DEBUG: Found {len(events)} events before filtering")
+        
+        # Process events to group by client and calculate hours
+        client_data = {}
+        filtered_out_count = 0
+        
+        for event in events:
+            try:
+                # Get the event summary/title
+                event_summary = event.get('summary', '').strip()
+                if not event_summary:
+                    print(f"DEBUG: Skipping event with no summary")
+                    filtered_out_count += 1
+                    continue
+                
+                # Find if any client name is present in the event title
+                client_name = None
+                for name in valid_client_names:
+                    if name and name in event_summary:
+                        client_name = name
+                        break
+                
+                # Skip events that don't contain any valid client name
+                if not client_name:
+                    print(f"DEBUG: Skipping event - no matching client name found in: {event_summary}")
+                    filtered_out_count += 1
+                    continue
+                    
+                print(f"DEBUG: Matched client '{client_name}' in event: {event_summary}")
+                
+                # Get organizer's email and map to instructor name
+                organizer_email = event.get('organizer', {}).get('email', '')
+                organizer_username = organizer_email.split('@')[0] if '@' in organizer_email else ''
+                instructor_name = instructors_map.get(organizer_username, organizer_username)
+                
+                # Calculate event duration in hours
+                start = parse_iso_datetime(event['start'].get('dateTime', event['start'].get('date')))
+                end = parse_iso_datetime(event['end'].get('dateTime', event['end'].get('date')))
+                
+                if not start or not end:
+                    print(f"DEBUG: Skipping event with invalid dates: {event_summary}")
+                    filtered_out_count += 1
+                    continue
+                
+                # Convert to local timezone for consistent calculation
+                if start.tzinfo is None:
+                    start = local_tz.localize(start)
+                if end.tzinfo is None:
+                    end = local_tz.localize(end)
+                
+                duration_hours = (end - start).total_seconds() / 3600
+                print(f"DEBUG: Processing event: {event_summary}, Duration: {duration_hours:.2f} hours, Instructor: {instructor_name}")
+                
+                # Initialize client data if not exists
+                if client_name not in client_data:
+                    client_data[client_name] = {
+                        'total_hours': 0,
+                        'instructors': {}
+                    }
+                
+                # Update client's total hours
+                client_data[client_name]['total_hours'] += duration_hours
+                
+                # Update instructor hours
+                if instructor_name in client_data[client_name]['instructors']:
+                    client_data[client_name]['instructors'][instructor_name] += duration_hours
+                else:
+                    client_data[client_name]['instructors'][instructor_name] = duration_hours
+                    
+            except Exception as e:
+                print(f"ERROR processing event: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                filtered_out_count += 1
+                continue
+        
+        print(f"DEBUG: Processed {len(events)} events, filtered out {filtered_out_count} events")
+        print(f"DEBUG: Client data: {client_data}")
+        
+        # Convert to the format expected by the frontend
+        billing_data = []
+        for client, data in client_data.items():
+            # Create a dictionary with all required keys in the correct order
+            record = {}
+            
+            # Format instructor hours for display
+            instructor_hours = []
+            instructor_names = []
+            
+            for name, hours in data['instructors'].items():
+                instructor_hours.append(f"{hours:.1f}")
+                instructor_names.append(name)
+            
+            # Map the data to the correct columns
+            # Format values for display
+            record['לקוח'] = client  # Client name
+            record['סהכ שעות'] = round(data['total_hours'], 2)  # Total hours
+            record['לפי מדריך'] = '\n'.join(instructor_hours)  # Hours by instructor
+            record['מדריך'] = '\n'.join(instructor_names)  # Instructor names
+            record['תמחור שעה'] = 350  # Default hourly rate
+            # Ensure discount is always a number (0) and let frontend handle the % display
+            record['הנחה %'] = 0  # Default discount as number (will be formatted by frontend)
+            # Calculate total based on hours * rate * (1 - discount/100)
+            record['סיכום'] = round(data['total_hours'] * 350, 2)  # Calculate total
+            
+            billing_data.append(record)
+            
+            # Debug output
+            print(f"DEBUG: Added record - Client: {client}, Hours: {data['total_hours']}, Instructors: {instructor_names}")
+        
+        # Sort clients alphabetically
+        billing_data.sort(key=lambda x: x['לקוח'])
+        
+        # Prepare response
+        response_data = {
+            'status': 'success',
+            'data': billing_data
+        }
+        
+        # Debug log the response
+        print("DEBUG: Sending response:")
+        print(f"Status: success")
+        print(f"Number of records: {len(billing_data)}")
+        if billing_data:
+            print("First record sample:", {k: billing_data[0][k] for k in billing_data[0].keys()})
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        print(f"ERROR in get_billing_data: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+def parse_iso_datetime(dt_str):
+    """Parse ISO datetime string to datetime object"""
+    if not dt_str:
+        return None
+    try:
+        if 'T' in dt_str:
+            return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+        else:
+            return datetime.strptime(dt_str, '%Y-%m-%d')
+    except (ValueError, TypeError) as e:
+        print(f"Error parsing datetime {dt_str}: {str(e)}")
+        return None
+
+def get_calendar_service():
+    """Get an authorized Google Calendar API service instance using service account."""
+    from google.oauth2 import service_account
+    
+    SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+    SERVICE_ACCOUNT_FILE = os.getenv('SERVICE_ACCOUNT_FILE')
+    
+    if not SERVICE_ACCOUNT_FILE or not os.path.exists(SERVICE_ACCOUNT_FILE):
+        print(f"Error: Service account file not found at {SERVICE_ACCOUNT_FILE}")
+        return None
+    
+    try:
+        # Create credentials using the service account file
+        creds = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE, 
+            scopes=SCOPES
+        )
+        
+        # Create the service
+        service = build('calendar', 'v3', credentials=creds)
+        print("Successfully created Google Calendar service")
+        return service
+        
+    except Exception as e:
+        print(f"Error creating calendar service: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def fetch_events_from_calendar(start_date, end_date):
+    """Fetch events from Google Calendar for the given date range"""
+    print("\n=== Starting fetch_events_from_calendar ===")
+    print(f"Start date: {start_date}, End date: {end_date}")
+    
+    try:
+        # Get the Google Calendar service
+        print("Getting calendar service...")
+        service = get_calendar_service()
+        
+        if not service:
+            print("❌ Failed to get calendar service")
+            return []
+            
+        print("✅ Successfully got calendar service")
+        
+        # Get the calendar ID from environment variables
+        calendar_id = os.getenv('CALENDAR_ID', 'primary')
+        print(f"Using calendar ID: {calendar_id}")
+        
+        # Format dates for the API (in UTC, without timezone offset)
+        time_min = start_date.astimezone(pytz.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        time_max = end_date.astimezone(pytz.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        
+        print(f"\n🔍 Fetching events from {time_min} to {time_max}")
+        
+        # Prepare the API request
+        request = service.events().list(
+            calendarId=calendar_id,
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,
+            orderBy='startTime',
+            maxResults=1000
+        )
+        
+        print("\n📡 Sending API request...")
+        print(f"Request URL: {request.uri}")
+        print(f"Request method: {request.method}")
+        print(f"Request headers: {request.headers}")
+        
+        # Execute the request
+        events_result = request.execute()
+        
+        print("\n✅ API Response received")
+        print(f"Response keys: {list(events_result.keys())}")
+        
+        items = events_result.get('items', [])
+        print(f"\n📅 Found {len(items)} events in calendar {calendar_id}")
+        
+        # Debug: Print event details
+        if not items:
+            print("No events found in the specified date range")
+        else:
+            print("\n=== First 3 events ===")
+            for i, item in enumerate(items[:3]):
+                summary = item.get('summary', 'No title')
+                start = item.get('start', {})
+                end = item.get('end', {})
+                print(f"\nEvent {i+1}:")
+                print(f"  Summary: {summary}")
+                print(f"  Start: {start.get('dateTime', start.get('date', 'No start date'))}")
+                print(f"  End: {end.get('dateTime', end.get('date', 'No end date'))}")
+                print(f"  Status: {item.get('status', 'No status')}")
+        
+        print("\n=== End of fetch_events_from_calendar ===\n")
+        return items
+        
+    except Exception as e:
+        print("\n❌ Error in fetch_events_from_calendar:")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error message: {str(e)}")
+        print("\nStack trace:")
+        import traceback
+        traceback.print_exc()
+        print("\n=== End of error ===\n")
+        return []
 
 @app.route('/calendar')
 def calendar_page():
