@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 import os
+import gspread
 from dotenv import load_dotenv
 from utils.google_sheets import (
     fetch_instructors,
@@ -12,7 +13,8 @@ from utils.google_sheets import (
     get_payment_worksheets,
     fetch_payment_data,
     append_row,
-    update_row
+    update_row,
+    get_gspread_client
 )
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -406,46 +408,44 @@ def create_instructors_map():
 
 @app.route('/api/billing')
 def get_billing_data():
-    print("DEBUG: /api/billing endpoint called")
     try:
         # Get month and year from query parameters
         month = int(request.args.get('month', datetime.now().month))
         year = int(request.args.get('year', datetime.now().year))
-        print(f"DEBUG: Requested month: {month}, year: {year}")
+        include_rates = request.args.get('include_rates', 'false').lower() == 'true'
         
-        # Get all valid client names from Google Sheets
+        # Get all valid client names from Google Sheets (with caching)
         valid_client_names = get_client_names_from_sheets()
-        print(f"DEBUG: Valid client names: {valid_client_names}")
         
-        # Create instructor mapping
+        # Create instructor mapping (with caching)
         instructors_map = create_instructors_map()
         
-        # Calculate the date range for the selected month (in local timezone)
+        # Calculate the date range for the selected month
         local_tz = pytz.timezone('Asia/Jerusalem')
         start_date = local_tz.localize(datetime(year, month, 1))
+        end_date = local_tz.localize(datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1))
         
-        if month == 12:
-            end_date = local_tz.localize(datetime(year + 1, 1, 1))
+        # Cache key for calendar events
+        cache_key = f'calendar_events_{year}_{month}'
+        events = None
+        
+        # Try to get events from cache first
+        if cache_key in session:
+            events = session[cache_key]
         else:
-            end_date = local_tz.localize(datetime(year, month + 1, 1))
-        
-        print(f"DEBUG: Date range (local time): {start_date} to {end_date}")
-        
-        # Fetch events from Google Calendar
-        events = fetch_events_from_calendar(start_date, end_date)
-        print(f"DEBUG: Found {len(events)} events before filtering")
+            # Fetch events from Google Calendar if not in cache
+            events = fetch_events_from_calendar(start_date, end_date)
+            # Store in session cache for 1 hour
+            session[cache_key] = events
         
         # Process events to group by client and calculate hours
         client_data = {}
-        filtered_out_count = 0
         
         for event in events:
             try:
                 # Get the event summary/title
                 event_summary = event.get('summary', '').strip()
                 if not event_summary:
-                    print(f"DEBUG: Skipping event with no summary")
-                    filtered_out_count += 1
                     continue
                 
                 # Find if any client name is present in the event title
@@ -457,11 +457,7 @@ def get_billing_data():
                 
                 # Skip events that don't contain any valid client name
                 if not client_name:
-                    print(f"DEBUG: Skipping event - no matching client name found in: {event_summary}")
-                    filtered_out_count += 1
                     continue
-                    
-                print(f"DEBUG: Matched client '{client_name}' in event: {event_summary}")
                 
                 # Get organizer's email and map to instructor name
                 organizer_email = event.get('organizer', {}).get('email', '')
@@ -473,8 +469,6 @@ def get_billing_data():
                 end = parse_iso_datetime(event['end'].get('dateTime', event['end'].get('date')))
                 
                 if not start or not end:
-                    print(f"DEBUG: Skipping event with invalid dates: {event_summary}")
-                    filtered_out_count += 1
                     continue
                 
                 # Convert to local timezone for consistent calculation
@@ -484,7 +478,6 @@ def get_billing_data():
                     end = local_tz.localize(end)
                 
                 duration_hours = (end - start).total_seconds() / 3600
-                print(f"DEBUG: Processing event: {event_summary}, Duration: {duration_hours:.2f} hours, Instructor: {instructor_name}")
                 
                 # Initialize client data if not exists
                 if client_name not in client_data:
@@ -497,68 +490,88 @@ def get_billing_data():
                 client_data[client_name]['total_hours'] += duration_hours
                 
                 # Update instructor hours
-                if instructor_name in client_data[client_name]['instructors']:
-                    client_data[client_name]['instructors'][instructor_name] += duration_hours
-                else:
-                    client_data[client_name]['instructors'][instructor_name] = duration_hours
-                    
+                if instructor_name not in client_data[client_name]['instructors']:
+                    client_data[client_name]['instructors'][instructor_name] = 0
+                client_data[client_name]['instructors'][instructor_name] += duration_hours
+                
             except Exception as e:
-                print(f"ERROR processing event: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                filtered_out_count += 1
+                # Silently skip problematic events
                 continue
         
-        print(f"DEBUG: Processed {len(events)} events, filtered out {filtered_out_count} events")
-        print(f"DEBUG: Client data: {client_data}")
-        
-        # Convert to the format expected by the frontend
+        # Format the data for the frontend
         billing_data = []
-        for client, data in client_data.items():
-            # Create a dictionary with all required keys in the correct order
-            record = {}
-            
+        
+        # Add rates and discounts if they exist
+        # Set default rate to 350 if not specified
+        default_rate = 350
+        
+        # Get rates and discounts if requested
+        rates_and_discounts = {}
+        if include_rates:
+            try:
+                # Get rates and discounts for the month/year
+                month_str = str(month)
+                year_str = str(year)
+                rates_response = get_rates_discounts_internal(month_str, year_str)
+                if rates_response and isinstance(rates_response, list):
+                    for item in rates_response:
+                        client_name = item.get('לקוח')
+                        if client_name:
+                            if client_name not in rates_and_discounts:
+                                rates_and_discounts[client_name] = {}
+                            if 'תמחור שעה' in item:
+                                rates_and_discounts[client_name]['תמחור שעה'] = item['תמחור שעה']
+                            if 'הנחה %' in item:
+                                rates_and_discounts[client_name]['הנחה %'] = item['הנחה %']
+            except Exception as e:
+                # If rates/discounts fail, continue without them
+                print(f"Error getting rates and discounts: {e}")
+        
+        for client_name, data in client_data.items():
             # Format instructor hours for display
             instructor_hours = []
             instructor_names = []
             
             for name, hours in data['instructors'].items():
-                instructor_hours.append(f"{hours:.1f}")
+                instructor_hours.append(f"{name}: {hours:.2f}")
                 instructor_names.append(name)
             
-            # Map the data to the correct columns
-            # Format values for display
-            record['לקוח'] = client  # Client name
-            record['סהכ שעות'] = round(data['total_hours'], 2)  # Total hours
-            record['לפי מדריך'] = '\n'.join(instructor_hours)  # Hours by instructor
-            record['מדריך'] = '\n'.join(instructor_names)  # Instructor names
-            record['תמחור שעה'] = 350  # Default hourly rate
-            # Ensure discount is always a number (0) and let frontend handle the % display
-            record['הנחה %'] = 0  # Default discount as number (will be formatted by frontend)
-            # Calculate total based on hours * rate * (1 - discount/100)
-            record['סיכום'] = round(data['total_hours'] * 350, 2)  # Calculate total
+            # Get client-specific rate and discount if available
+            client_rate = default_rate
+            client_discount = 0
+            
+            if client_name in rates_and_discounts:
+                client_data_rates = rates_and_discounts[client_name]
+                if 'תמחור שעה' in client_data_rates:
+                    client_rate = float(client_data_rates['תמחור שעה'])
+                if 'הנחה %' in client_data_rates:
+                    client_discount = float(client_data_rates['הנחה %'])
+            
+            # Calculate total with applied discount
+            total = data['total_hours'] * client_rate * (1 - client_discount/100)
+            
+            # Create the record
+            record = {
+                'לקוח': client_name,
+                'סהכ שעות': round(data['total_hours'], 2),
+                'לפי מדריך': '\n'.join(instructor_hours),
+                'מדריך': '\n'.join(instructor_names),
+                'תמחור שעה': client_rate,
+                'הנחה %': client_discount,
+                'סיכום': round(total, 2)
+            }
             
             billing_data.append(record)
-            
-            # Debug output
-            print(f"DEBUG: Added record - Client: {client}, Hours: {data['total_hours']}, Instructors: {instructor_names}")
         
-        # Sort clients alphabetically
-        billing_data.sort(key=lambda x: x['לקוח'])
-        
-        # Prepare response
         response_data = {
             'status': 'success',
             'data': billing_data
         }
         
-        # Debug log the response
-        print("DEBUG: Sending response:")
-        print(f"Status: success")
-        print(f"Number of records: {len(billing_data)}")
-        if billing_data:
-            print("First record sample:", {k: billing_data[0][k] for k in billing_data[0].keys()})
-        
+        # Include rates and discounts in the response if requested
+        if include_rates:
+            response_data['rates'] = rates_and_discounts
+            
         return jsonify(response_data)
         
     except Exception as e:
@@ -873,6 +886,432 @@ def update_client(unique_id):
     except Exception as e:
         print(f"Error updating client: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/export_billing', methods=['POST'])
+def export_billing_to_sheets():
+    try:
+        data = request.json
+        month = int(data.get('month'))
+        year = int(data.get('year'))
+        billing_data = data.get('data', [])
+        
+        if not billing_data:
+            return jsonify({'success': False, 'error': 'No data to export'}), 400
+        
+        # Get Hebrew month name
+        hebrew_months = [
+            'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+            'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'
+        ]
+        worksheet_name = f"{hebrew_months[month-1]} {year}"
+        
+        # Get Google Sheets client
+        gc = get_gspread_client()
+        spreadsheet_id = os.getenv('billing_SPREADSHEET_ID')
+        spreadsheet = gc.open_by_key(spreadsheet_id)
+        
+        # Define headers in the specified RTL order (excluding 'מספר' column)
+        headers = [
+            'סיכום', 'הנחה %', 'תמחור שעה', 'מדריך', 'לפי מדריך',
+            'סהכ שעות', 'לקוח'
+        ]
+        
+        # Try to get the worksheet, create if it doesn't exist
+        try:
+            worksheet = spreadsheet.worksheet(worksheet_name)
+            worksheet_fresh = False
+        except gspread.exceptions.WorksheetNotFound:
+            # Create a new worksheet with headers and formatting
+            worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=1000, cols=20)
+            worksheet.append_row(headers)
+            worksheet_fresh = True
+        
+        # For existing worksheets, update headers if needed
+        if not worksheet_fresh:
+            # Get existing data to check headers
+            existing_data = worksheet.get_all_values()
+            existing_headers = existing_data[0] if existing_data else []
+            
+            # Update headers if they don't match
+            if not existing_headers or len(existing_headers) < len(headers):
+                worksheet.update('A1', [headers])
+        
+        # Apply header formatting (for both new and existing worksheets)
+        header_format = {
+            'textFormat': {
+                'bold': True,
+                'foregroundColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}  # Blue color
+            },
+            'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9},  # Light gray
+            'horizontalAlignment': 'CENTER',
+            'verticalAlignment': 'MIDDLE'
+        }
+        worksheet.format('A1:H1', header_format)
+        
+        # Clear existing data (except headers) if there are any rows
+        try:
+            if worksheet.row_count > 1:
+                # Delete all rows starting from row 2 to the end
+                worksheet.delete_rows(2, worksheet.row_count)
+        except Exception as e:
+            print(f"Warning: Could not clear existing rows: {e}")
+            # If clearing fails, try to clear the worksheet another way
+            try:
+                worksheet.clear()
+                # Re-add headers after clearing
+                worksheet.append_row(headers)
+                worksheet.format('A1:H1', header_format)
+            except Exception as e2:
+                print(f"Error clearing worksheet: {e2}")
+                # If we can't clear, continue and let the append update the data
+        
+        # Prepare data for export
+        rows = []
+        for item in billing_data:
+            # Helper function to safely get and format values
+            def get_value(key, default='', is_percent=False, keep_newlines=False):
+                # The values are already processed on the client side, so we can use them as is
+                value = item.get(key, default)
+                if value is None:
+                    return default
+                if is_percent:
+                    # For percentages, ensure we return a number without the % sign
+                    if isinstance(value, str):
+                        return str(value).replace('%', '')
+                    return str(value)
+                if isinstance(value, (int, float)):
+                    return value
+                if not keep_newlines:
+                    return str(value).replace('\n', ' ')
+                return str(value)
+            
+            # Prepare row data in the specified RTL order (excluding 'מספר' column)
+            row = [
+                get_value('סיכום'),
+                get_value('הנחה %', is_percent=True),
+                get_value('תמחור שעה'),
+                get_value('מדריך', keep_newlines=True),  # Keep newlines for these columns
+                get_value('לפי מדריך', keep_newlines=True),  # Keep newlines for these columns
+                get_value('סהכ שעות'),
+                get_value('לקוח')
+            ]
+            rows.append(row)
+        
+        # Add data to worksheet
+        if rows:
+            worksheet.append_rows(rows)
+            
+            # Format number columns with new positions (adjusted for removed column)
+            # A: סיכום, B: הנחה %, C: תמחור שעה, F: סהכ שעות
+            number_columns = {
+                'A': '0.00',   # סיכום
+                'B': '0',      # הנחה %
+                'C': '0.00',   # תמחור שעה
+                'F': '0.00'    # סהכ שעות
+            }
+            
+            # Apply number formatting
+            for col, format_str in number_columns.items():
+                range_str = f"{col}2:{col}{len(rows)+1}"
+                worksheet.format(range_str, {
+                    'numberFormat': {
+                        'type': 'NUMBER',
+                        'pattern': format_str
+                    },
+                    'horizontalAlignment': 'CENTER'
+                })
+            
+            # Apply font styles to columns
+            # Column A: סיכום - bold #7f007f
+            worksheet.format(f'A2:A{len(rows)+1}', {
+                'textFormat': {
+                    'bold': True,
+                    'foregroundColor': {'red': 0.5, 'green': 0.0, 'blue': 0.5}  # #7f007f
+                },
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column B: הנחה % - not bold, black
+            worksheet.format(f'B2:B{len(rows)+1}', {
+                'textFormat': {
+                    'bold': False,
+                    'foregroundColor': {'red': 0, 'green': 0, 'blue': 0}  # Black
+                },
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column C: תמחור שעה - not bold, black
+            worksheet.format(f'C2:C{len(rows)+1}', {
+                'textFormat': {
+                    'bold': False,
+                    'foregroundColor': {'red': 0, 'green': 0, 'blue': 0}  # Black
+                },
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column D: מדריך - not bold #007f00
+            worksheet.format(f'D2:D{len(rows)+1}', {
+                'textFormat': {
+                    'bold': False,
+                    'foregroundColor': {'red': 0.0, 'green': 0.5, 'blue': 0.0}  # #007f00
+                },
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column E: לפי מדריך - not bold #007f00
+            worksheet.format(f'E2:E{len(rows)+1}', {
+                'textFormat': {
+                    'bold': False,
+                    'foregroundColor': {'red': 0.0, 'green': 0.5, 'blue': 0.0}  # #007f00
+                },
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column F: סהכ שעות - bold #7f007f
+            worksheet.format(f'F2:F{len(rows)+1}', {
+                'textFormat': {
+                    'bold': True,
+                    'foregroundColor': {'red': 0.5, 'green': 0.0, 'blue': 0.5}  # #7f007f
+                },
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column G: לקוח - bold #7f007f
+            worksheet.format(f'G2:G{len(rows)+1}', {
+                'textFormat': {
+                    'bold': True,
+                    'foregroundColor': {'red': 0.5, 'green': 0.0, 'blue': 0.5}  # #7f007f
+                },
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Format all headers to be bold and blue with light gray background
+            header_range = f'A1:{chr(64 + len(headers))}1'  # A1:G1 for 7 columns
+            worksheet.format(header_range, {
+                'textFormat': {
+                    'bold': True,
+                    'foregroundColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}  # Blue color
+                },
+                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9},  # #e5e5e5 equivalent
+                'horizontalAlignment': 'CENTER',
+                'verticalAlignment': 'MIDDLE'
+            })
+            
+            # Format all data cells to have white background
+            if len(rows) > 0:
+                data_range = f'A2:{chr(64 + len(headers))}{len(rows) + 1}'
+                worksheet.format(data_range, {
+                    'backgroundColor': {'red': 1.0, 'green': 1.0, 'blue': 1.0}  # White background
+                })
+        
+        return jsonify({
+            'success': True,
+            'message': f'Data exported successfully to {worksheet_name}'
+        })
+        
+    except Exception as e:
+        print(f"Error exporting to Google Sheets: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to export data: {str(e)}'
+        }), 500
+
+# Helper function to get rates and discounts without going through API
+def get_rates_discounts_internal(month, year):
+    """Get rates and discounts for specific month/year without creating a new HTTP request"""
+    try:
+        # Cache key for rates and discounts
+        cache_key = f'rates_discounts_{year}_{month}'
+        
+        # Check if we have cached data
+        if cache_key in session:
+            return session[cache_key]
+        
+        # Get rates/discounts from the database
+        gc = get_gspread_client()
+        
+        # Get the spreadsheet ID from environment variables
+        spreadsheet_id = os.getenv('billing_SPREADSHEET_ID')
+        if not spreadsheet_id:
+            return []
+        
+        # Open the spreadsheet
+        spreadsheet = gc.open_by_key(spreadsheet_id)
+        
+        try:
+            worksheet = spreadsheet.worksheet('תעריפים והנחות')
+            records = worksheet.get_all_records()
+            
+            # Filter records for the requested month and year
+            filtered_records = [
+                {
+                    'לקוח': record['לקוח'],
+                    'חודש': record['חודש'],
+                    'שנה': record['שנה'],
+                    'סוג': record['סוג'],
+                    'ערך': float(record['ערך']) if record['ערך'] else 0
+                }
+                for record in records
+                if str(record.get('חודש', '')).strip() == str(month) 
+                and str(record.get('שנה', '')).strip() == str(year)
+            ]
+            
+            # Process records to create a client-based lookup
+            client_rates = {}
+            
+            for record in filtered_records:
+                client_name = record['לקוח']
+                rate_type = record['סוג']  # 'תמחור שעה' or 'הנחה %'
+                value = record['ערך']
+                
+                if client_name not in client_rates:
+                    client_rates[client_name] = {}
+                    
+                client_rates[client_name][rate_type] = value
+            
+            # Cache the results
+            session[cache_key] = client_rates
+            
+            return client_rates
+            
+        except gspread.exceptions.WorksheetNotFound:
+            # If worksheet doesn't exist, return empty dict
+            return {}
+    except Exception as e:
+        print(f"Error in get_rates_discounts_internal: {e}")
+        return {}
+
+@app.route('/api/get_rates_discounts', methods=['GET'])
+def get_rates_discounts():
+    try:
+        month = request.args.get('month')
+        year = request.args.get('year')
+        
+        if not month or not year:
+            return jsonify({
+                'success': False,
+                'error': 'חסרים פרטי חודש/שנה'  # Missing month/year details
+            }), 400
+        
+        # Use the internal helper function to get rates and discounts
+        client_rates = get_rates_discounts_internal(month, year)
+        
+        # Convert the client_rates dictionary to a list format for the API response
+        result_records = []
+        
+        for client_name, rates in client_rates.items():
+            for rate_type, value in rates.items():
+                result_records.append({
+                    'לקוח': client_name,  # Client name
+                    'חודש': month,      # Month
+                    'שנה': year,        # Year
+                    'סוג': rate_type,   # Type (rate or discount)
+                    'ערך': value        # Value
+                })
+        
+        return jsonify({
+            'success': True,
+            'data': result_records
+        })
+            
+    except Exception as e:
+        print(f"Error fetching rates and discounts: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'שגיאה בטעינת הנתונים: {str(e)}'
+        }), 500
+
+@app.route('/api/save_rate_discount', methods=['POST'])
+def save_rate_discount():
+    try:
+        data = request.json
+        client_name = data.get('client_name')
+        change_type = data.get('change_type')  # 'תמחור שעה' or 'הנחה %'
+        new_value = float(data.get('new_value', 0))
+        month = int(data.get('month'))
+        year = int(data.get('year'))
+        
+        if not client_name or not change_type:
+            return jsonify({'success': False, 'error': 'חסרים פרטים נדרשים'}), 400
+        
+        # Get Hebrew month name
+        hebrew_months = [
+            'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+            'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'
+        ]
+        month_name = hebrew_months[month - 1]
+        
+        # Get Google Sheets client
+        gc = get_gspread_client()
+        spreadsheet_id = os.getenv('billing_SPREADSHEET_ID')
+        spreadsheet = gc.open_by_key(spreadsheet_id)
+        
+        # Get or create the "תעריפים והנחות" worksheet
+        try:
+            worksheet = spreadsheet.worksheet('תעריפים והנחות')
+        except gspread.exceptions.WorksheetNotFound:
+            # Create the worksheet if it doesn't exist
+            worksheet = spreadsheet.add_worksheet(title='תעריפים והנחות', rows=1000, cols=5)
+            # Add headers
+            headers = ['לקוח', 'חודש', 'שנה', 'סוג', 'ערך']
+            worksheet.append_row(headers)
+            
+            # Format headers
+            header_format = {
+                'textFormat': {'bold': True},
+                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9},
+                'horizontalAlignment': 'CENTER',
+                'verticalAlignment': 'MIDDLE'
+            }
+            worksheet.format('A1:E1', header_format)
+        
+        # Check if a row with the same client, month, year, and change type already exists
+        records = worksheet.get_all_records()
+        row_updated = False
+        
+        # Start from row 2 (1-based) since row 1 is headers
+        for i in range(2, len(records) + 2):
+            try:
+                client = worksheet.cell(i, 1).value
+                record_month = worksheet.cell(i, 2).value
+                record_year = worksheet.cell(i, 3).value
+                record_type = worksheet.cell(i, 4).value
+                
+                if (client == client_name and 
+                    str(record_month) == str(month) and 
+                    str(record_year) == str(year) and 
+                    record_type == change_type):
+                    
+                    # Update the existing row's value
+                    worksheet.update_cell(i, 5, new_value)
+                    row_updated = True
+                    break
+                    
+            except Exception as e:
+                print(f"Error checking row {i}: {str(e)}")
+                continue
+        
+        # If no existing row was found, append a new one
+        if not row_updated:
+            worksheet.append_row([
+                client_name,  # לקוח
+                str(month),   # חודש (numeric)
+                str(year),    # שנה
+                change_type,  # סוג (תמחור שעה / הנחה %)
+                new_value     # ערך
+            ])
+        
+        return jsonify({
+            'success': True,
+            'message': f'{change_type} עודכן ל-{new_value} עבור {client_name} ({month_name} {year})'
+        })
+        
+    except Exception as e:
+        print(f"Error saving rate and discount: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'שגיאה בשמירת הנתונים: {str(e)}'
+        }), 500
 
 # Add instructor routes are implemented above
 

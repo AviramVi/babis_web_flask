@@ -60,24 +60,34 @@
             <!-- Debug information will be inserted here -->
         </div>
     </div>
+    
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
 </div>
 
 <style>
-.billing-container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 20px;
-    direction: rtl;
-}
+    /* Toast notification styles */
+    .toast {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background-color: #4CAF50;
+        color: white;
+        padding: 15px 25px;
+        border-radius: 4px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        z-index: 1000;
+        opacity: 0;
+        transition: opacity 0.3s ease-in-out;
+    }
 
-.billing-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
-    gap: 20px;
-}
+    .toast.show {
+        opacity: 1;
+    }
+
+    .toast.error {
+        background-color: #f44336;
+    }
 
 .page-title {
     margin: 0;
@@ -161,8 +171,35 @@
 }
 
 .number-cell {
-    text-align: center;
-    min-width: 80px;
+    text-align: left;
+    direction: ltr;
+    font-family: 'Courier New', monospace;
+    padding: 8px 12px;
+}
+
+/* Client cell style */
+.client-cell {
+    font-weight: bold !important;
+    color: #FF00FF !important; /* Bright magenta color */
+}
+
+/* Instructor hours cell style (לפי מדריך) */
+.instructor-hours-cell {
+    color: #2E7D32 !important; /* Dark green to match מדריך */
+    font-weight: 500 !important;
+    white-space: pre-line !important;
+}
+
+/* Hours total column (סהכ שעות) */
+td:nth-child(3) {
+    font-weight: bold !important;
+    color: #FF00FF !important; /* Bright magenta color */
+}
+
+/* Total column (סיכום) */
+td:last-child {
+    font-weight: bold !important;
+    color: #FF00FF !important; /* Bright magenta color */
 }
 
 .no-data {
@@ -231,27 +268,19 @@ let billingData = [];
 
 // Function to load billing data based on selected month and year
 async function loadBillingData() {
-    debugLog('loadBillingData called');
-    
     // Get the select elements and table body
     const monthSelect = document.getElementById('monthSelect');
     const yearSelect = document.getElementById('yearSelect');
     const tableBody = document.getElementById('billingTableBody');
     
     if (!monthSelect || !yearSelect || !tableBody) {
-        debugLog('Required elements not found', { 
-            monthSelect: !!monthSelect, 
-            yearSelect: !!yearSelect, 
-            tableBody: !!tableBody 
-        });
+        console.error('Required elements not found for billing data loading');
         return;
     }
     
     const month = monthSelect.value;
     const year = yearSelect.value;
     const headers = Array.from(document.querySelectorAll('th')).map(th => th.textContent);
-    
-    debugLog('Loading data for:', { month, year });
     
     // Show loading message
     tableBody.innerHTML = `
@@ -260,129 +289,80 @@ async function loadBillingData() {
         </tr>`;
     
     try {
-        debugLog(`Fetching billing data for ${month}/${year}`);
-        const apiUrl = `/api/billing?month=${month}&year=${year}`;
-        debugLog('API URL:', apiUrl);
+        // Optimize by fetching both billing data and rates/discounts in one API call
+        const apiUrl = `/api/billing?month=${month}&year=${year}&include_rates=true`;
         
-        // Show loading state
-        tableBody.innerHTML = `
-            <tr>
-                <td colspan="${headers.length + 1}" class="no-data loading">טוען נתונים...</td>
-            </tr>`;
-        
-        // Call our API endpoint to get billing data
-        debugLog('Sending fetch request...');
         const startTime = performance.now();
-        
         const response = await fetch(apiUrl, {
             headers: {
-                'Accept': 'application/json',
-                'Cache-Control': 'no-cache'
+                'Accept': 'application/json'
             },
-            cache: 'no-store',
             credentials: 'same-origin'  // Include cookies for session
         });
         
-        const endTime = performance.now();
-        const fetchTime = (endTime - startTime).toFixed(2);
-        debugLog(`Fetch completed in ${fetchTime}ms`);
-        debugLog('Response status:', { status: response.status, statusText: response.statusText });
+        const fetchTime = (performance.now() - startTime).toFixed(2);
+        console.log(`Billing data fetch completed in ${fetchTime}ms`);
         
         if (!response.ok) {
-            const errorText = await response.text();
-            const errorDetails = {
-                status: response.status,
-                statusText: response.statusText,
-                headers: Object.fromEntries(response.headers.entries()),
-                body: errorText,
-                fetchTime: `${fetchTime}ms`
-            };
-            debugLog('API Error Response:', errorDetails);
             throw new Error(`HTTP error! status: ${response.status} - ${response.statusText}`);
         }
         
-        debugLog('Parsing response as JSON...');
-        const data = await response.json();
-        debugLog('Received data:', data);
+        const responseData = await response.json();
         
-            // Check if we got an error message from the API
-            if (data && data.error) {
-                debugLog('API returned error:', data.error);
-                throw new Error(data.error);
-            }
-            
-            // The data should be either an array or an object with a data property
-            if (!Array.isArray(data) && !(data && typeof data === 'object' && 'data' in data)) {
-                debugLog('Unexpected data format received:', data);
-                throw new Error('Unexpected data format received from server');
-            }
+        // Process the response data
+        let billingData = [];
+        let ratesAndDiscounts = {};
         
-        debugLog(`Successfully received ${data.length} billing records`);
-        
-        // Store the data
-        billingData = data;
-        
-        // Update the URL without reloading the page
-        const newUrl = `${window.location.pathname}?month=${month}&year=${year}`;
-        window.history.pushState({ path: newUrl }, '', newUrl);
-        
-        // Log the raw response for debugging
-        console.log('Raw API response:', data);
-        
-        try {
-            // First, try to parse the response if it's a string
-            let responseData = data;
-            if (typeof data === 'string') {
-                try {
-                    responseData = JSON.parse(data);
-                } catch (e) {
-                    console.error('Failed to parse response as JSON:', e);
-                    throw new Error('Invalid response format from server');
-                }
-            }
-            
-            // Check for the standard response format {status: 'success', data: [...]}
-            if (responseData && typeof responseData === 'object') {
-                if (responseData.status === 'success' && Array.isArray(responseData.data)) {
-                    console.log(`Rendering ${responseData.data.length} records from response.data`);
-                    if (responseData.data.length > 0) {
-                        console.log('First record sample:', responseData.data[0]);
-                    }
-                    renderBillingData(responseData.data);
-                    return;
-                } 
-                // If data is directly in the response as an array
-                else if (Array.isArray(responseData)) {
-                    console.log(`Rendering ${responseData.length} records from direct array`);
-                    if (responseData.length > 0) {
-                        console.log('First record sample:', responseData[0]);
-                    }
-                    renderBillingData(responseData);
-                    return;
-                }
-            }
-            
-            console.error('Unexpected response format:', responseData);
+        if (responseData && responseData.status === 'success') {
+            billingData = responseData.data || [];
+            ratesAndDiscounts = responseData.rates || {};
+        } else if (Array.isArray(responseData)) {
+            billingData = responseData;
+        } else {
             throw new Error('Invalid data format received from server');
-            
-        } catch (error) {
-            console.error('Error processing response:', error);
-            throw new Error('Failed to process server response: ' + error.message);
         }
+        
+        // Apply the rates and discounts to the billing data
+        if (Object.keys(ratesAndDiscounts).length > 0) {
+            billingData = billingData.map(record => {
+                const clientName = record['לקוח'];
+                const clientRates = ratesAndDiscounts[clientName];
+                
+                if (clientRates) {
+                    // Apply rate if available
+                    if (clientRates['תמחור שעה'] !== undefined) {
+                        record['תמחור שעה'] = clientRates['תמחור שעה'];
+                    }
+                    // Apply discount if available
+                    if (clientRates['הנחה %'] !== undefined) {
+                        record['הנחה %'] = clientRates['הנחה %'];
+                    }
+                }
+                
+                // Calculate the total based on hours, rate, and discount
+                const hours = parseFloat(record['סהכ שעות']) || 0;
+                const rate = parseFloat(record['תמחור שעה']) || 0;
+                const discount = parseFloat(record['הנחה %']) || 0;
+                
+                // Calculate total with discount applied
+                const total = hours * rate * (1 - (discount / 100));
+                record['סיכום'] = total;
+                
+                return record;
+            });
+        }
+        
+        // Render the billing data with the updated rates, discounts, and totals
+        renderBillingData(billingData);
+        
     } catch (error) {
-        const errorDetails = {
-            message: error.message,
-            name: error.name,
-            stack: error.stack
-        };
-        debugLog('Error in loadBillingData:', errorDetails);
+        console.error('Error loading billing data:', error);
         
-        const errorMessage = error.message || 'נסה שוב מאוחר יותר';
-        
+        // Show error message in table
         tableBody.innerHTML = `
             <tr>
-                <td colspan="${document.querySelectorAll('th').length + 1}" class="no-data error">
-                    שגיאה בטעינת הנתונים: ${errorMessage}
+                <td colspan="${headers.length + 1}" class="no-data error">
+                    שגיאה בטעינת הנתונים: ${error.message || 'נסה שוב מאוחר יותר'}
                     <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
                         לחץ על "הצג מידע ניפוי" לפרטים נוספים
                     </div>
@@ -468,8 +448,8 @@ function renderBillingData(data) {
                     // Ensure we have a number, default to 350 if not set
                     let rateValue = parseFloat(record['תמחור שעה']);
                     if (isNaN(rateValue)) rateValue = 350;
-                    // Format as currency
-                    value = `₪${formatNumber(rateValue, 2)}`;
+                    // Format as number
+                    value = formatNumber(rateValue, 2);
                     cell.className = 'number-cell';
                     // Store the raw number value in a data attribute for calculations
                     cell.dataset.rawValue = rateValue;
@@ -574,8 +554,8 @@ function renderBillingData(data) {
                 // Ensure we have a number, default to 350 if not set
                 let rateValue = parseFloat(client['תמחור שעה']);
                 if (isNaN(rateValue)) rateValue = 350;
-                // Format as currency
-                value = `₪${formatNumber(rateValue, 2)}`;
+                // Format as number
+                value = formatNumber(rateValue, 2);
                 cell.className = 'number-cell';
                 // Store the raw number value in a data attribute for calculations
                 cell.dataset.rawValue = rateValue;
@@ -589,7 +569,7 @@ function renderBillingData(data) {
                 // Store the raw number value in a data attribute for calculations
                 cell.dataset.rawValue = discountValue;
             } else if (header === 'סיכום') {
-                value = client['סיכום'] ? `₪${formatNumber(client['סיכום'], 2)}` : '';
+                value = client['סיכום'] ? formatNumber(client['סיכום'], 2) : '';
                 cell.className = 'number-cell total-cell';
                 cell.style.fontWeight = 'bold';
             } else {
@@ -614,16 +594,46 @@ function renderBillingData(data) {
                 });
                 
                 // Handle blur event
-                cell.addEventListener('blur', function() {
+                cell.addEventListener('blur', async function() {
+                    const clientName = row.querySelector('.client-cell').textContent.trim();
+                    const monthSelect = document.getElementById('monthSelect');
+                    const yearSelect = document.getElementById('yearSelect');
+                    
                     let value = parseFloat(this.textContent.trim()) || 0;
                     // Ensure value is not negative
                     value = Math.max(0, value);
-                    // Update display with currency symbol
-                    this.textContent = `₪${formatNumber(value, 2)}`;
+                    
+                    // Store old value for potential rollback
+                    const oldValue = this.dataset.rawValue || 0;
+                    
+                    // If value hasn't changed, just exit
+                    if (value === parseFloat(oldValue)) {
+                        this.contentEditable = false;
+                        return;
+                    }
+                    
+                    // Update display as number
+                    this.textContent = formatNumber(value, 2);
                     // Store raw value for calculations
                     this.dataset.rawValue = value;
                     this.contentEditable = false;
-                    // Update total
+                    
+                    // Save the rate change to Google Sheets
+                    const success = await saveRateAndDiscount(
+                        clientName,
+                        'תמחור שעה',
+                        value,
+                        monthSelect.value,
+                        yearSelect.value
+                    );
+                    
+                    if (!success) {
+                        // Revert changes if save failed
+                        this.textContent = formatNumber(oldValue, 2);
+                        this.dataset.rawValue = oldValue;
+                    }
+                    
+                    // Update total regardless of save success
                     updateTotal(row);
                 });
                 
@@ -672,16 +682,50 @@ function renderBillingData(data) {
                 });
                 
                 // Handle blur event
-                cell.addEventListener('blur', function() {
+                cell.addEventListener('blur', async function() {
+                    const clientName = row.querySelector('.client-cell').textContent.trim();
+                    const monthSelect = document.getElementById('monthSelect');
+                    const yearSelect = document.getElementById('yearSelect');
+                    
                     let value = parseFloat(this.textContent.trim()) || 0;
                     // Ensure value is between 0 and 100
                     value = Math.min(100, Math.max(0, value));
+                    
+                    // Store old value for potential rollback
+                    const oldValue = this.dataset.rawValue || 0;
+                    
+                    // If value hasn't changed, just exit
+                    if (Math.round(value) === Math.round(parseFloat(oldValue) || 0)) {
+                        this.contentEditable = false;
+                        this.textContent = `${Math.round(value)}%`;  // Ensure consistent formatting
+                        return;
+                    }
+                    
+                    // Round to nearest integer for display
+                    const roundedValue = Math.round(value);
+                    
                     // Update display with %
-                    this.textContent = `${Math.round(value)}%`;
+                    this.textContent = `${roundedValue}%`;
                     // Store raw value for calculations
-                    this.dataset.rawValue = value;
+                    this.dataset.rawValue = roundedValue;
                     this.contentEditable = false;
-                    // Update total
+                    
+                    // Save the discount change to Google Sheets
+                    const success = await saveRateAndDiscount(
+                        clientName,
+                        'הנחה %',
+                        roundedValue,
+                        monthSelect.value,
+                        yearSelect.value
+                    );
+                    
+                    if (!success) {
+                        // Revert changes if save failed
+                        this.textContent = `${Math.round(oldValue)}%`;
+                        this.dataset.rawValue = oldValue;
+                    }
+                    
+                    // Update total regardless of save success
                     updateTotal(row);
                 });
                 
@@ -751,7 +795,7 @@ function renderBillingData(data) {
                     const total = subtotal * (1 - (discount / 100));
                     
                     // Update total cell
-                    totalCell.textContent = `₪${formatNumber(total, 2)}`;
+                    totalCell.textContent = formatNumber(total, 2);
                     
                     // Update the cell's data attributes if they don't have them
                     if (!rateCell.dataset.rawValue) {
@@ -769,13 +813,25 @@ function renderBillingData(data) {
 }
 
 // Helper function to format numbers with specific decimal places
+// Shows whole numbers when decimal part is zero, otherwise shows 2 decimal places
 function formatNumber(num, decimals) {
     if (num === undefined || num === null || num === '') return '';
     const number = parseFloat(num);
-    return isNaN(number) ? '' : number.toLocaleString(undefined, {
-        minimumFractionDigits: decimals,
-        maximumFractionDigits: decimals
-    });
+    if (isNaN(number)) return '';
+    
+    // Check if the number is a whole number
+    if (number % 1 === 0) {
+        return number.toLocaleString(undefined, {
+            maximumFractionDigits: 0,
+            minimumFractionDigits: 0
+        });
+    } else {
+        // For numbers with decimal part, show exactly 2 decimal places
+        return number.toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+    }
 }
 
 // Helper function to format cell content (for future use)
@@ -796,6 +852,82 @@ function formatPercentage(value) {
     if (value === undefined || value === null) return '';
     const num = parseFloat(value);
     return isNaN(num) ? '' : `${num}%`;
+}
+
+// Function to show toast notification
+function showToast(message, isError = false) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.className = 'toast' + (isError ? ' error' : '');
+    
+    // Show the toast
+    setTimeout(() => toast.classList.add('show'), 10);
+    
+    // Hide the toast after 2 seconds
+    setTimeout(() => {
+        toast.classList.remove('show');
+    }, 2000);
+}
+
+// Function to save rate or discount changes to Google Sheets
+async function saveRateAndDiscount(clientName, changeType, newValue, month, year) {
+    try {
+        const response = await fetch('/api/save_rate_discount', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                client_name: clientName,
+                change_type: changeType,
+                new_value: parseFloat(newValue) || 0,
+                month: parseInt(month),
+                year: parseInt(year)
+            })
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            console.error('Error saving rate/discount:', result.error);
+            // Show error toast
+            showToast(`שגיאה בשמירת השינויים: ${result.error || 'שגיאה לא ידועה'}`, true);
+            return false;
+        }
+        // Show success toast
+        showToast(result.message || 'השינויים נשמרו בהצלחה!');
+        return true;
+    } catch (error) {
+        console.error('Error saving rate/discount:', error);
+        showToast('אירעה שגיאה בשמירת השינויים. נסה שוב.', true);
+        return false;
+    }
+}
+
+// Function to load saved rates and discounts
+async function loadRatesAndDiscounts(month, year) {
+    try {
+        const response = await fetch(`/api/get_rates_discounts?month=${month}&year=${year}`);
+        const result = await response.json();
+        
+        if (!result.success) {
+            console.error('Error loading rates and discounts:', result.error);
+            return {};
+        }
+        
+        // Convert the array of changes to a lookup object by client name
+        const clientData = {};
+        result.data.forEach(change => {
+            if (!clientData[change.לקוח]) {
+                clientData[change.לקוח] = {};
+            }
+            clientData[change.לקוח][change.סוג] = change.ערך;
+        });
+        
+        return clientData;
+    } catch (error) {
+        console.error('Error loading rates and discounts:', error);
+        return {};
+    }
 }
 
 // Debug functions
@@ -840,39 +972,229 @@ function toggleDebug() {
     }
 }
 
-// Initialize the page
-document.addEventListener('DOMContentLoaded', function() {
-    debugLog('Billing page loaded');
+// Apply saved rates and discounts to the table
+function applySavedRatesAndDiscounts(ratesAndDiscounts) {
+    const tableBody = document.querySelector('#billingTable tbody');
+    if (!tableBody) return;
     
+    const rows = tableBody.querySelectorAll('tr');
+    
+    rows.forEach(row => {
+        const clientCell = row.querySelector('.client-cell');
+        if (!clientCell) return;
+        
+        const clientName = clientCell.textContent.trim();
+        const clientData = ratesAndDiscounts[clientName];
+        if (!clientData) return;
+        
+        let needsUpdate = false;
+        
+        // Update rate if exists
+        if (clientData['תמחור שעה'] !== undefined) {
+            const rateCell = row.querySelector('td:nth-child(6)');
+            if (rateCell) {
+                const rateValue = parseFloat(clientData['תמחור שעה']);
+                rateCell.textContent = formatNumber(rateValue, 2);
+                rateCell.dataset.rawValue = rateValue;
+                needsUpdate = true;
+            }
+        }
+        
+        // Update discount if exists
+        if (clientData['הנחה %'] !== undefined) {
+            const discountCell = row.querySelector('td:nth-child(7)');
+            if (discountCell) {
+                const discountValue = Math.round(parseFloat(clientData['הנחה %']));
+                discountCell.textContent = `${discountValue}%`;
+                discountCell.dataset.rawValue = discountValue;
+                needsUpdate = true;
+            }
+        }
+        
+        // Update the total if any changes were made
+        if (needsUpdate) {
+            updateTotal(row);
+        }
+    });
+}
+document.addEventListener('DOMContentLoaded', async function() {
     // Get the select elements
     const monthSelect = document.getElementById('monthSelect');
     const yearSelect = document.getElementById('yearSelect');
     
-    // Log initial values
-    debugLog('Initial month:', monthSelect ? monthSelect.value : 'not found');
-    debugLog('Initial year:', yearSelect ? yearSelect.value : 'not found');
-    
-    // Add event listeners for the dropdowns
-    if (monthSelect) {
-        monthSelect.addEventListener('change', loadBillingData);
-        debugLog('Added change listener to month select');
-    } else {
-        debugLog('Month select element not found', { error: 'element_not_found', id: 'monthSelect' });
+    if (!monthSelect || !yearSelect) {
+        console.error('Could not find month/year select elements');
+        return;
     }
     
-    if (yearSelect) {
-        yearSelect.addEventListener('change', loadBillingData);
-        debugLog('Added change listener to year select');
-    } else {
-        debugLog('Year select element not found', { error: 'element_not_found', id: 'yearSelect' });
+    // Check if the URL already has month/year parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const monthParam = urlParams.get('month');
+    const yearParam = urlParams.get('year');
+    
+    if (monthParam && yearParam) {
+        // Use the parameters from URL
+        monthSelect.value = monthParam;
+        yearSelect.value = yearParam;
     }
+    
+    // Load data with combined API call (gets billing data with rates/discounts in one request)
+    await loadBillingData();
+    
+    // Add event listeners for month and year changes
+    const handleDateChange = async function() {
+        const month = monthSelect.value;
+        const year = yearSelect.value;
+        
+        // Update the URL without reloading the page
+        const newUrl = `${window.location.pathname}?month=${month}&year=${year}`;
+        window.history.pushState({ path: newUrl }, '', newUrl);
+        
+        // Load the data for the new month/year
+        await loadBillingData();
+    };
+    
+    monthSelect.addEventListener('change', handleDateChange);
+    yearSelect.addEventListener('change', handleDateChange);
     
     // Set up event listeners for the export button
     const exportBtn = document.querySelector('.btn-export');
     if (exportBtn) {
-        exportBtn.addEventListener('click', function() {
-            alert('ייצוא לאקסל יוטמע בהמשך');
-            // TODO: Implement export to Excel functionality
+        exportBtn.addEventListener('click', async function() {
+            try {
+                const monthSelect = document.getElementById('monthSelect');
+                const yearSelect = document.getElementById('yearSelect');
+                
+                if (!monthSelect || !yearSelect) {
+                    throw new Error('לא ניתן למצוא את בחירת החודש/שנה');
+                }
+                
+                // Show loading state
+                const originalText = exportBtn.textContent;
+                exportBtn.disabled = true;
+                exportBtn.textContent = 'מבצע ייצוא...';
+                
+                // Get the current billing data
+                const response = await fetch(`/api/billing?month=${monthSelect.value}&year=${yearSelect.value}`);
+                if (!response.ok) {
+                    throw new Error('שגיאה בטעינת נתוני החיובים');
+                }
+                
+                let data = await response.json();
+                
+                console.log('Starting export process...');
+                
+                // Get all table rows
+                const tableBody = document.getElementById('billingTableBody');
+                if (!tableBody) {
+                    console.error('Billing table body not found');
+                    throw new Error('Could not find billing table body');
+                }
+                
+                const tableRows = tableBody.querySelectorAll('tr');
+                console.log(`Found ${tableRows.length} rows in the table`);
+                
+                if (tableRows.length === 0) {
+                    console.error('No data rows found in the table');
+                    throw new Error('No data available to export');
+                }
+                
+                // Collect data directly from the table
+                const tableData = [];
+                
+                tableRows.forEach((row, rowIndex) => {
+                    const cells = row.querySelectorAll('td');
+                    console.log(`\n--- Processing row ${rowIndex + 1} ---`);
+                    
+                    if (cells.length < 8) {
+                        console.warn(`Skipping row ${rowIndex + 1} - not enough cells (${cells.length})`);
+                        return;
+                    }
+                    
+                    // Get cell values
+                    const rowData = {
+                        'מספר': (rowIndex + 1).toString(),
+                        'לקוח': cells[1]?.textContent?.trim() || '',
+                        'סהכ שעות': parseFloat(cells[2]?.textContent?.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0,
+                        'מדריך': cells[3]?.textContent?.trim() || '',
+                        'לפי מדריך': cells[4]?.textContent?.trim() || '',
+                        'תמחור שעה': parseFloat(cells[5]?.textContent?.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0,
+                        'הנחה %': parseFloat(cells[6]?.textContent?.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0,
+                        'סיכום': parseFloat(cells[7]?.textContent?.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0
+                    };
+                    
+                    // Log the extracted data for this row
+                    console.log(`Row ${rowIndex + 1} data:`, rowData);
+                    
+                    tableData.push(rowData);
+                });
+                
+                if (tableData.length === 0) {
+                    throw new Error('No valid data found in the table');
+                }
+                
+                console.log('Processed table data:', tableData);
+                
+                // Prepare export data
+                const exportData = {
+                    month: parseInt(monthSelect.value),
+                    year: parseInt(yearSelect.value),
+                    data: tableData
+                };
+                
+                console.log('Sending export data:', exportData);
+                
+                // Debug: Log the final export data
+                console.log('Final export data:', exportData);
+                
+                // Validate that we have data to export
+                if (!exportData.data || exportData.data.length === 0) {
+                    throw new Error('No valid data to export');
+                }
+                
+                try {
+                    // Send the export request
+                    const exportResponse = await fetch('/api/export_billing', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(exportData)
+                    });
+                    
+                    // Debug: Log the response status
+                    console.log('Export response status:', exportResponse.status);
+                    
+                    if (!exportResponse.ok) {
+                        const errorText = await exportResponse.text();
+                        console.error('Export error response:', errorText);
+                        throw new Error(`Server responded with status ${exportResponse.status}: ${errorText}`);
+                    }
+                    
+                    const result = await exportResponse.json();
+                    console.log('Export result:', result);
+                    
+                    if (result.success) {
+                        const sheetName = result.message.split('to ')[1] || 'the spreadsheet';
+                        alert(`הנתונים יוצאו בהצלחה לגיליון ${sheetName}`);
+                        return result;
+                    } else {
+                        throw new Error(result.error || 'אירעה שגיאה בייצוא הנתונים');
+                    }
+                } catch (error) {
+                    console.error('Error during export:', error);
+                    throw error; // Re-throw to be caught by the outer catch block
+                }
+            } catch (error) {
+                console.error('Export error:', error);
+                alert(`שגיאה בייצוא לאקסל: ${error.message || 'אירעה שגיאה לא צפויה'}`);
+            } finally {
+                // Reset button state
+                if (exportBtn) {
+                    exportBtn.disabled = false;
+                    exportBtn.textContent = 'ייצוא לאקסל';
+                }
+            }
         });
     } else {
         debugLog('Export button not found', { error: 'element_not_found', class: 'btn-export' });
