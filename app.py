@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, g
 import os
 import gspread
 from dotenv import load_dotenv
@@ -16,6 +16,7 @@ from utils.google_sheets import (
     update_row,
     get_gspread_client
 )
+from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 import calendar as pycalendar
@@ -31,6 +32,11 @@ from time import time
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # Required for session
 load_dotenv()
+
+@app.context_processor
+def inject_now():
+    """Make 'now' available to all templates."""
+    return {'now': datetime.now()}
 
 # Simple in-memory cache for billing API
 billing_cache = {}  # (month, year): (timestamp, data)
@@ -302,19 +308,155 @@ def update_institutional_client_route():
 
 @app.route('/payments')
 def payments():
-    worksheet_names = get_payment_worksheets()
-    selected_worksheet = request.args.get('worksheet', worksheet_names[0] if worksheet_names else None)
-    headers, payment_records = fetch_payment_data(selected_worksheet)
-    # Use the requested headers and order
-    desired_headers = ['מדריך', 'סהכ שעות', 'לפי לקוח', 'לקוח', 'שכר שעה', 'סיכום']
-    headers = desired_headers
+    # Get current month and year
+    now = datetime.now()
+    current_month = now.month
+    current_year = now.year
+    
+    # Get selected month and year from query parameters
+    try:
+        selected_month = int(request.args.get('month', current_month))
+        selected_year = int(request.args.get('year', current_year))
+    except (ValueError, TypeError):
+        selected_month = current_month
+        selected_year = current_year
+    
+    # Generate years for the dropdown (previous, current, next year)
+    years = [current_year-1, current_year, current_year+1]
+    
+    # Get payment data for the selected month/year
+    payment_data = get_payment_data(selected_month, selected_year)
+    
+    # Define Hebrew months for the dropdown
+    hebrew_months = [
+        (1, 'ינואר'), (2, 'פברואר'), (3, 'מרץ'), (4, 'אפריל'),
+        (5, 'מאי'), (6, 'יוני'), (7, 'יולי'), (8, 'אוגוסט'),
+        (9, 'ספטמבר'), (10, 'אוקטובר'), (11, 'נובמבר'), (12, 'דצמבר')
+    ]
+    
     return render_template(
         'payments.html',
-        headers=headers,
-        records=payment_records,
-        worksheet_names=worksheet_names,
-        selected_worksheet=selected_worksheet
+        headers=['מדריך', 'סהכ שעות', 'לפי לקוח', 'לקוח', 'שכר שעה', 'סיכום'],
+        records=payment_data.get('records', []),
+        months=hebrew_months,
+        years=years,
+        selected_month=selected_month,
+        selected_year=selected_year,
+        total_hours=payment_data.get('total_hours', 0),
+        total_payment=payment_data.get('total_payment', 0)
     )
+
+def get_payment_data(month, year):
+    """Fetch and process payment data for a specific month and year."""
+    try:
+        # Get calendar service
+        service = get_calendar_service()
+        if not service:
+            return {'records': [], 'total_hours': 0, 'total_payment': 0}
+        
+        # Calculate date range for the month
+        start_date = datetime(year, month, 1).isoformat() + 'Z'  # 'Z' indicates UTC time
+        if month == 12:
+            end_date = datetime(year + 1, 1, 1).isoformat() + 'Z'
+        else:
+            end_date = datetime(year, month + 1, 1).isoformat() + 'Z'
+        
+        # Fetch events from calendar
+        events_result = service.events().list(
+            calendarId=os.getenv('CALENDAR_ID'),
+            timeMin=start_date,
+            timeMax=end_date,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        
+        events = events_result.get('items', [])
+        
+        # Process events into payment data
+        instructor_data = {}
+        instructors_map = create_instructors_map()
+        
+        for event in events:
+            # Skip events without an organizer
+            if 'organizer' not in event or 'email' not in event['organizer']:
+                continue
+                
+            # Get instructor name from email
+            organizer_email = event['organizer']['email']
+            username = organizer_email.split('@')[0]
+            instructor_name = instructors_map.get(username, username)
+            
+            # Calculate event duration in hours
+            start = event.get('start', {}).get('dateTime', event.get('start', {}).get('date'))
+            end = event.get('end', {}).get('dateTime', event.get('end', {}).get('date'))
+            
+            if not start or not end:
+                continue
+                
+            try:
+                start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
+                duration_hours = (end_dt - start_dt).total_seconds() / 3600
+            except (ValueError, TypeError):
+                continue
+            
+            # Get client name from event title
+            client_name = event.get('summary', '').split(' - ')[0]
+            
+            # Initialize instructor data if not exists
+            if instructor_name not in instructor_data:
+                instructor_data[instructor_name] = {
+                    'total_hours': 0,
+                    'by_client': {},
+                    'hourly_rate': 200,  # Default hourly rate
+                    'total_payment': 0
+                }
+            
+            # Update instructor data
+            instructor = instructor_data[instructor_name]
+            instructor['total_hours'] += duration_hours
+            
+            # Track hours by client
+            if client_name not in instructor['by_client']:
+                instructor['by_client'][client_name] = 0
+            instructor['by_client'][client_name] += duration_hours
+        
+        # Calculate total payment for each instructor
+        for instructor in instructor_data.values():
+            instructor['total_payment'] = instructor['total_hours'] * instructor['hourly_rate']
+        
+        # Convert to records for display
+        records = []
+        total_hours = 0
+        total_payment = 0
+        
+        for instructor_name, data in instructor_data.items():
+            # Format client breakdown
+            client_breakdown = []
+            for client, hours in data['by_client'].items():
+                client_breakdown.append(f"{client}: {hours:.1f} שעות")
+            
+            records.append({
+                'instructor': instructor_name,
+                'total_hours': f"{data['total_hours']:.1f}",
+                'by_client': '<br>'.join(client_breakdown),
+                'client': '<br>'.join(data['by_client'].keys()),
+                'hourly_rate': f"{data['hourly_rate']:,.2f}",
+                'total_payment': f"{data['total_payment']:,.2f}"
+            })
+            
+            total_hours += data['total_hours']
+            total_payment += data['total_payment']
+        
+        return {
+            'records': records,
+            'total_hours': total_hours,
+            'total_payment': total_payment
+        }
+        
+    except Exception as e:
+        print(f"Error getting payment data: {e}")
+        return {'records': [], 'total_hours': 0, 'total_payment': 0}
 
 # Define Hebrew months for the billing dropdown
 HEBREW_MONTHS = [
@@ -1010,40 +1152,121 @@ def export_billing_to_sheets():
                 return str(value)
             
             # Prepare row data in the specified RTL order (excluding 'מספר' column)
+            # Get values exactly as they appear in the table
+            def format_number(value):
+                if value is None:
+                    return ''
+                return str(value).replace(',', '')  # Remove any thousands separators
+            
+            # Get all values
+            summary = format_number(get_value('סיכום'))
+            discount = format_number(get_value('הנחה %', is_percent=True))
+            rate = format_number(get_value('תמחור שעה'))
+            by_instructor = get_value('לפי מדריך', keep_newlines=True)
+            instructor = get_value('מדריך', keep_newlines=True)
+            total_hours = format_number(get_value('סהכ שעות'))
+            client = get_value('לקוח')
+            
+            # Create the row with columns in the correct order and swapped columns D and E
+            # Prefix numeric values with a single quote to force text format in Google Sheets
             row = [
-                get_value('סיכום'),
-                get_value('הנחה %', is_percent=True),
-                get_value('תמחור שעה'),
-                get_value('מדריך', keep_newlines=True),  # Keep newlines for these columns
-                get_value('לפי מדריך', keep_newlines=True),  # Keep newlines for these columns
-                get_value('סהכ שעות'),
-                get_value('לקוח')
+                f"'{summary}" if summary.replace('.', '', 1).isdigit() else summary,  # A: סיכום
+                discount,         # B: הנחה %
+                rate,             # C: תמחור שעה
+                by_instructor,    # D: לפי מדריך (swapped with E)
+                instructor,       # E: מדריך (swapped with D)
+                total_hours,      # F: סהכ שעות
+                client            # G: לקוח
             ]
             rows.append(row)
         
-        # Add data to worksheet
+        # Add data to worksheet with proper formatting
         if rows:
-            worksheet.append_rows(rows)
+            # First, clear existing content (except headers)
+            if len(worksheet.get_all_values()) > 1:  # If there are rows after header
+                worksheet.delete_rows(2, len(worksheet.get_all_values()))
             
-            # Format number columns with new positions (adjusted for removed column)
-            # A: סיכום, B: הנחה %, C: תמחור שעה, F: סהכ שעות
-            number_columns = {
-                'A': '0.00',   # סיכום
-                'B': '0',      # הנחה %
-                'C': '0.00',   # תמחור שעה
-                'F': '0.00'    # סהכ שעות
-            }
+            # Convert data to 2D array for batch update
+            values = []
+            for row_data in rows:
+                # Prepare the row with proper formatting
+                row = []
+                for i, value in enumerate(row_data):
+                    if value is None:
+                        row.append('')
+                    elif i == 0:  # Column A - force text format
+                        # For column A, always treat as text and preserve exact format
+                        row.append(str(value))
+                    else:
+                        # For other columns, keep original type
+                        row.append(value)
+                values.append(row)
             
-            # Apply number formatting
-            for col, format_str in number_columns.items():
-                range_str = f"{col}2:{col}{len(rows)+1}"
-                worksheet.format(range_str, {
+            # Write all data at once with RAW input option to prevent any interpretation
+            if values:
+                # First, write the data with RAW format to prevent any interpretation
+                worksheet.append_rows(values, value_input_option='RAW')
+                
+                # Then update column A with text format to ensure it stays as-is
+                col_a_values = [[str(row[0])] for row in values]  # Get column A values as strings
+                worksheet.update(f'A2:A{len(values)+1}', col_a_values, value_input_option='USER_ENTERED')
+                
+                # Set the format for column A to text
+                worksheet.format('A2:A', {
                     'numberFormat': {
-                        'type': 'NUMBER',
-                        'pattern': format_str
+                        'type': 'TEXT'
                     },
                     'horizontalAlignment': 'CENTER'
                 })
+            
+            # Apply number formats
+            # Column A: Text format
+            worksheet.format('A2:A', {
+                'numberFormat': {
+                    'type': 'TEXT'
+                },
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column B: Whole number
+            worksheet.format('B2:B', {
+                'numberFormat': {
+                    'type': 'NUMBER',
+                    'pattern': '0'
+                },
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column C: Number with 2 decimals
+            worksheet.format('C2:C', {
+                'numberFormat': {
+                    'type': 'NUMBER',
+                    'pattern': '0.00'
+                },
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Columns D, E: Text format
+            worksheet.format('D2:E', {
+                'numberFormat': {
+                    'type': 'TEXT'
+                },
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column F: Number with 2 decimals
+            worksheet.format('F2:F', {
+                'numberFormat': {
+                    'type': 'NUMBER',
+                    'pattern': '0.00'
+                },
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column G: Text format (client)
+            worksheet.format('G2:G', {
+                'horizontalAlignment': 'CENTER'
+            })
             
             # Apply font styles to columns
             # Column A: סיכום - bold #7f007f

@@ -1685,108 +1685,104 @@ class BillingScreen(QWidget):
                 is_new_worksheet = True
                 existing_data = [[""] * 7]  # Initialize with empty header row
 
-            # Prepare headers and data
-            headers = ["סיכום", "הנחה %", "תמחור שעה", "מדריך", "לפי מדריך", "סהכ שעות", "לקוח"]
+            # Prepare headers and data - in the order they appear in the table
+            headers = ["לקוח", "סהכ שעות", "לפי מדריך", "מדריך", "תמחור שעה", "הנחה %", "סיכום"]
             
             # Prepare all table data
             table_data = []
             for row in range(self.table.rowCount()):
                 row_data = []
-                for col in reversed(range(self.table.columnCount())):
+                for col in range(self.table.columnCount()):
                     item = self.table.item(row, col)
-                    row_data.append(item.text() if item else '')
+                    if item is not None:
+                        # Convert numbers to float when appropriate, keep as string otherwise
+                        text = item.text()
+                        if col in [1, 4, 5, 6]:  # Columns with numbers: סהכ שעות, תמחור שעה, הנחה %, סיכום
+                            try:
+                                # Remove any thousands separators and convert to float
+                                clean_text = text.replace(',', '').replace('₪', '').strip()
+                                if clean_text:  # Only convert if not empty string
+                                    num = float(clean_text)
+                                    # Keep as string but ensure proper decimal format
+                                    row_data.append(str(int(num)) if num.is_integer() else str(num))
+                                else:
+                                    row_data.append('')
+                            except (ValueError, AttributeError):
+                                row_data.append(text)
+                        else:
+                            row_data.append(text)
+                    else:
+                        row_data.append('')
                 table_data.append(row_data)
             
             # Combine headers and data for one batch update
             all_data = [headers] + table_data
             
-            # Calculate which rows to update
-            rows_to_update = []
-            if is_new_worksheet:
-                # If it's a new worksheet, update everything
-                rows_to_update = list(range(len(all_data)))
-            else:
-                # Compare with existing data and only update changed rows
-                for i in range(len(all_data)):
-                    if i >= len(existing_data) or all_data[i] != existing_data[i]:
-                        rows_to_update.append(i)
-            
-            # Batch update only changed rows
-            batch_updates = []
-            
-            # Always update header row
-            if 0 in rows_to_update or is_new_worksheet:
-                worksheet.update('A1:G1', [headers])
+            # Always update all data at once for consistency
+            if all_data:
+                # Clear existing data first
+                worksheet.clear()
                 
-            # Update only changed data rows
-            for row_idx in rows_to_update:
-                if row_idx > 0:  # Skip header (already updated)
-                    row_num = row_idx + 1  # 1-indexed for sheets
-                    row_range = f'A{row_num}:G{row_num}'
-                    worksheet.update(row_range, [all_data[row_idx]])
+                # Update all data in one batch
+                worksheet.update('A1', all_data, value_input_option='USER_ENTERED')
+                
+                # Set the header row format
+                header_format = {
+                    'textFormat': {'bold': True, 'foregroundColor': {'red': 0, 'green': 0, 'blue': 1}},
+                    'horizontalAlignment': 'CENTER',
+                    'verticalAlignment': 'MIDDLE'
+                }
+                worksheet.format('A1:G1', header_format)
             
-            # Apply formatting in batches by column
-            format_requests = []
-            
-            # Header row formatting
-            header_format = {
-                'textFormat': {'bold': True, 'foregroundColor': {'red': 0, 'green': 0, 'blue': 1}},
-                'horizontalAlignment': 'CENTER',
-                'verticalAlignment': 'MIDDLE'
-            }
-            
-            # Column-specific formatting for the entire data range
+            # Apply number formatting to numeric columns
             data_rows = len(all_data)
             if data_rows > 1:  # Only if we have data
-                # Column formats (define once per column)
-                column_formats = []
-                
-                # Columns: לקוח and סהכ שעות in purple
-                purple_format = {
-                    'textFormat': {'foregroundColor': {'red': 0.5, 'green': 0, 'blue': 0.5}},
-                    'horizontalAlignment': 'CENTER',
-                    'verticalAlignment': 'MIDDLE'
-                }
-                
-                # Columns: לפי מדריך and מדריך in green
-                green_format = {
-                    'textFormat': {'foregroundColor': {'red': 0, 'green': 0.5, 'blue': 0}},
-                    'horizontalAlignment': 'CENTER',
-                    'verticalAlignment': 'MIDDLE'
-                }
-                
-                # Columns: תמחור שעה and הנחה % in black
-                black_format = {
-                    'textFormat': {'foregroundColor': {'red': 0, 'green': 0, 'blue': 0}},
-                    'horizontalAlignment': 'CENTER',
-                    'verticalAlignment': 'MIDDLE'
-                }
-                
-                # Column: סיכום in purple and bold
-                summary_format = {
-                    'textFormat': {
-                        'foregroundColor': {'red': 0.5, 'green': 0, 'blue': 0.5},
-                        'bold': True
+                # Format numbers with 2 decimal places
+                number_format = {
+                    'numberFormat': {
+                        'type': 'NUMBER',
+                        'pattern': '#,##0.00'
                     },
                     'horizontalAlignment': 'CENTER',
                     'verticalAlignment': 'MIDDLE'
                 }
                 
-                # Apply header format
-                worksheet.format('A1:G1', header_format)
+                # Format percentage with 2 decimal places
+                percent_format = {
+                    'numberFormat': {
+                        'type': 'PERCENT',
+                        'pattern': '0.00%'
+                    },
+                    'horizontalAlignment': 'CENTER',
+                    'verticalAlignment': 'MIDDLE'
+                }
                 
-                # Apply column formats
-                if data_rows > 1:
-                    data_range = f'A2:G{data_rows}'
-                    
-                    # Apply center alignment to all data cells
-                    worksheet.format(data_range, {'horizontalAlignment': 'CENTER', 'verticalAlignment': 'MIDDLE'})
-                    
-                    # Format specific columns
-                    worksheet.format(f'A2:A{data_rows}', summary_format)  # סיכום
-                    worksheet.format(f'B2:C{data_rows}', black_format)    # הנחה % & תמחור שעה
-                    worksheet.format(f'D2:E{data_rows}', green_format)    # מדריך & לפי מדריך
-                    worksheet.format(f'F2:G{data_rows}', purple_format)   # סהכ שעות & לקוח
+                # Format summary column (column A)
+                summary_format = {
+                    'textFormat': {
+                        'bold': True,
+                        'foregroundColor': {'red': 0.5, 'green': 0, 'blue': 0.5}
+                    },
+                    'numberFormat': {
+                        'type': 'NUMBER',
+                        'pattern': '#,##0.00'
+                    },
+                    'horizontalAlignment': 'CENTER',
+                    'verticalAlignment': 'MIDDLE'
+                }
+                
+                # Apply number formatting to numeric columns
+                worksheet.format(f'B2:B{data_rows}', number_format)  # הנחה %
+                worksheet.format(f'C2:C{data_rows}', number_format)  # תמחור שעה
+                worksheet.format(f'G2:G{data_rows}', number_format)  # סהכ שעות
+                worksheet.format(f'A2:A{data_rows}', summary_format)  # סיכום
+                
+                # Format columns with text
+                text_format = {
+                    'horizontalAlignment': 'CENTER',
+                    'verticalAlignment': 'MIDDLE'
+                }
+                worksheet.format(f'D2:F{data_rows}', text_format)  # מדריך, לפי מדריך, לקוח
             
             # Show confirmation
             msg = QMessageBox(self)
