@@ -1,6 +1,40 @@
 {% extends 'base.html' %}
 
 {% block content %}
+<!-- Instructor Events Modal -->
+<div class="modal fade" id="instructorEventsModal" tabindex="-1" role="dialog" aria-labelledby="instructorEventsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="instructorEventsModalLabel">אירועים של מדריך</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="margin-right: auto; margin-left: 0;">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="table-responsive">
+                    <table class="table table-striped" id="instructorEventsTable">
+                        <thead class="thead-dark">
+                            <tr>
+                                <th>לקוח</th>
+                                <th>תאריך</th>
+                                <th>שעה</th>
+                                <th>מס' שעות</th>
+                            </tr>
+                        </thead>
+                        <tbody id="instructorEventsBody">
+                            <!-- Events will be loaded here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">סגור</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="container mt-4">
     <div class="row mb-4">
         <div class="col-12">
@@ -76,11 +110,21 @@
                             <tbody>
                                 {% for record in records %}
                                 <tr>
-                                    <td>{{ record.instructor }}</td>
+                                    <td>
+                                        <a href="#" class="instructor-link" data-instructor="{{ record.instructor }}">
+                                            {{ record.instructor }}
+                                        </a>
+                                    </td>
                                     <td class="text-center">{{ record.total_hours }}</td>
                                     <td class="text-center">{{ record.by_client|safe }}</td>
                                     <td class="text-center">{{ record.client|safe }}</td>
-                                    <td class="text-center">₪{{ record.hourly_rate }}</td>
+                                    <td class="text-center number-cell" 
+                                        data-instructor="{{ record.instructor }}"
+                                        data-month="{{ selected_month }}"
+                                        data-year="{{ selected_year }}"
+                                        style="cursor: pointer;">
+                                        ₪{{ record.hourly_rate|int }}
+                                    </td>
                                     <td class="text-center font-weight-bold">₪{{ record.total_payment }}</td>
                                 </tr>
                                 {% else %}
@@ -111,24 +155,441 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 <script>
-    // Function to export table data to Excel
-    function exportToExcel() {
-        // Get the table element
-        const table = document.querySelector('.table');
+    // Handle instructor link clicks and editable cells
+    document.addEventListener('DOMContentLoaded', function() {
+        // Make hourly rate cells editable
+        document.addEventListener('click', function(e) {
+            const cell = e.target.closest('td.number-cell');
+            if (cell && cell.textContent.trim().startsWith('₪')) {
+                // Store the current value
+                const currentValue = parseFloat(cell.textContent.replace(/[^0-9.]/g, '')) || 0;
+                cell.dataset.originalValue = currentValue;
+                
+                // Create and focus input
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.step = '10';  // 10₪ per click
+                input.min = '0';
+                input.value = Math.round(currentValue);  // Show whole numbers
+                input.style.width = '80%';
+                input.style.textAlign = 'center';
+                input.style.border = '1px solid #ccc';
+                input.style.padding = '2px';
+                input.style.borderRadius = '3px';
+                
+                // Clear cell and add input
+                cell.textContent = '';
+                cell.appendChild(input);
+                input.focus();
+                input.select();
+                
+                // Handle Enter key press
+                const handleKeyPress = (e) => {
+                    if (e.key === 'Enter') {
+                        saveHourlyRate(cell, input);
+                    } else if (e.key === 'Escape') {
+                        cell.textContent = `₪${parseFloat(cell.dataset.originalValue).toFixed(2)}`;
+                    }
+                };
+                
+                // Handle blur (clicking away)
+                const handleBlur = () => {
+                    saveHourlyRate(cell, input);
+                };
+                
+                input.addEventListener('keydown', handleKeyPress);
+                input.addEventListener('blur', handleBlur);
+            }
+        });
         
-        // Create a new workbook
-        const wb = XLSX.utils.book_new();
+        // Function to save the hourly rate
+        async function saveHourlyRate(cell, input) {
+            const instructor = cell.dataset.instructor;
+            const month = cell.dataset.month;
+            const year = cell.dataset.year;
+            const newValue = parseFloat(input.value) || 0;
+            const originalValue = parseFloat(cell.dataset.originalValue) || 0;
+            
+            // Remove input and show loading
+            cell.removeChild(input);
+            cell.textContent = 'מעדכן...';
+            
+            try {
+                const response = await fetch('/api/update_hourly_rate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        instructor: instructor,
+                        month: month,
+                        year: year,
+                        hourly_rate: newValue
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Update the total payment if server returned it
+                    if (data.total_payment) {
+                        const row = cell.closest('tr');
+                        const totalCell = row.querySelector('td:last-child');
+                        if (totalCell) {
+                            totalCell.textContent = `₪${parseFloat(data.total_payment.replace(/,/g, '')).toFixed(2)}`;
+                        }
+                    }
+                    // Show success message
+                    showToast('השכר המעודכן נשמר בהצלחה', false);
+                    // Update cell with new value (whole number)
+                    cell.textContent = `₪${Math.round(newValue)}`;
+                } else {
+                    throw new Error(data.error || 'Failed to update hourly rate');
+                }
+            } catch (error) {
+                console.error('Error updating hourly rate:', error);
+                // Revert to original value on error (whole number)
+                cell.textContent = `₪${Math.round(originalValue)}`;
+                showToast('אירעה שגיאה בעדכון השכר', true);
+            }
+        }
         
-        // Convert table to worksheet
-        const ws = XLSX.utils.table_to_sheet(table);
-        
-        // Add the worksheet to the workbook
-        XLSX.utils.book_append_sheet(wb, ws, 'תשלומים');
-        
-        // Generate Excel file and trigger download
-        const fileName = `תשלומים_{{ '%02d'|format(selected_month) }}_{{ selected_year }}.xlsx`;
-        XLSX.writeFile(wb, fileName);
+        // Function to show toast notifications
+        function showToast(message, isError = false) {
+            const toast = document.createElement('div');
+            toast.className = `toast ${isError ? 'alert-danger' : 'alert-success'}`;
+            toast.style.position = 'fixed';
+            toast.style.bottom = '20px';
+            toast.style.left = '50%';
+            toast.style.transform = 'translateX(-50%)';
+            toast.style.padding = '10px 20px';
+            toast.style.borderRadius = '4px';
+            toast.style.color = 'white';
+            toast.style.zIndex = '1000';
+            toast.style.boxShadow = '0 2px 10px rgba(0,0,0,0.1)';
+            toast.textContent = message;
+            
+            document.body.appendChild(toast);
+            
+            // Auto-remove after 3 seconds
+            setTimeout(() => {
+                toast.style.transition = 'opacity 0.5s';
+                toast.style.opacity = '0';
+                setTimeout(() => {
+                    document.body.removeChild(toast);
+                }, 500);
+            }, 3000);
+        }
+        // Function to create and show the edit modal
+        function showEditModal(title, currentValue, callback) {
+            const modalHtml = `
+                <div class="modal fade" id="editModal" tabindex="-1" role="dialog" aria-labelledby="editModalLabel" aria-hidden="true">
+                    <div class="modal-dialog" role="document">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="editModalLabel">${title}</h5>
+                                <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="margin-right: auto; margin-left: 0;">
+                                    <span aria-hidden="true">&times;</span>
+                                </button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="form-group">
+                                    <input type="number" step="0.01" class="form-control" id="editValue" value="${currentValue}">
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-dismiss="modal">ביטול</button>
+                                <button type="button" class="btn btn-primary" id="saveEdit">שמור</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+
+            // Remove existing modal if any
+            const existingModal = document.getElementById('editModal');
+            if (existingModal) {
+                existingModal.remove();
+            }
+
+            // Add new modal to body
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            
+            // Show modal
+            $('#editModal').modal('show');
+            
+            // Focus on input
+            setTimeout(() => {
+                const input = document.getElementById('editValue');
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }, 500);
+
+            // Set up save button
+            document.getElementById('saveEdit')?.addEventListener('click', function() {
+                const newValue = document.getElementById('editValue').value;
+                $('#editModal').modal('hide');
+                if (callback && typeof callback === 'function') {
+                    callback(newValue);
+                }
+            });
+
+            // Handle Enter key
+            document.getElementById('editValue')?.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    const newValue = document.getElementById('editValue').value;
+                    $('#editModal').modal('hide');
+                    if (callback && typeof callback === 'function') {
+                        callback(newValue);
+                    }
+                }
+            });
+        }
+
+
+        // Handle instructor name clicks (for showing events)
+        document.addEventListener('click', function(e) {
+            // Existing instructor link click handler
+            if (e.target.classList.contains('instructor-link') || e.target.closest('.instructor-link')) {
+                e.preventDefault();
+                const link = e.target.classList.contains('instructor-link') ? e.target : e.target.closest('.instructor-link');
+                const instructorName = link.getAttribute('data-instructor');
+                const month = document.getElementById('month').value;
+                const year = document.getElementById('year').value;
+                
+                // Show loading state
+                const modalTitle = document.getElementById('instructorEventsModalLabel');
+                const eventsBody = document.getElementById('instructorEventsBody');
+                modalTitle.textContent = `טוען אירועים עבור ${instructorName}...`;
+                eventsBody.innerHTML = '<tr><td colspan="4" class="text-center">טוען נתונים...</td></tr>';
+                
+                // Show the modal
+                $('#instructorEventsModal').modal('show');
+                
+                // Fetch instructor events
+                fetch(`/api/get_instructor_events?instructor=${encodeURIComponent(instructorName)}&month=${month}&year=${year}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            modalTitle.textContent = `אירועים של ${instructorName}`;
+                            
+                            if (data.events && data.events.length > 0) {
+                                let html = '';
+                                data.events.forEach(event => {
+                                    html += `
+                                        <tr>
+                                            <td>${event.client || 'אין כותרת'}</td>
+                                            <td>${event.date}</td>
+                                            <td>${event.time}</td>
+                                            <td>${event.duration}</td>
+                                        </tr>
+                                    `;
+                                });
+                                eventsBody.innerHTML = html;
+                            } else {
+                                eventsBody.innerHTML = '<tr><td colspan="4" class="text-center">לא נמצאו אירועים לחודש זה</td></tr>';
+                            }
+                        } else {
+                            modalTitle.textContent = 'שגיאה';
+                            eventsBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger">${data.error || 'אירעה שגיאה בטעינת הנתונים'}</td></tr>`;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching instructor events:', error);
+                        modalTitle.textContent = 'שגיאה';
+                        eventsBody.innerHTML = '<tr><td colspan="4" class="text-center text-danger">אירעה שגיאה בטעינת הנתונים</td></tr>';
+                    });
+            }
+            
+            // Handle hourly rate clicks
+            const hourlyRateElement = e.target.closest('.editable-hourly-rate');
+            if (hourlyRateElement) {
+                e.preventDefault();
+                const currentValue = parseFloat(hourlyRateElement.textContent.replace(/[^0-9.]/g, ''));
+                const instructor = hourlyRateElement.getAttribute('data-instructor');
+                const month = hourlyRateElement.getAttribute('data-month');
+                const year = hourlyRateElement.getAttribute('data-year');
+                const row = hourlyRateElement.closest('tr');
+                
+                showEditModal('ערוך שכר שעה', currentValue, (newValue) => {
+                    const numericValue = parseFloat(newValue);
+                    if (!isNaN(numericValue)) {
+                        // Update the UI immediately for better UX
+                        hourlyRateElement.textContent = `₪${numericValue.toFixed(2)}`;
+                        
+                        // Send the update to the server
+                        fetch('/api/update_hourly_rate', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                instructor: instructor,
+                                month: month,
+                                year: year,
+                                hourly_rate: numericValue
+                            })
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success) {
+                                // Update the total payment if the server returned an updated value
+                                if (data.total_payment && row) {
+                                    const totalCell = row.querySelector('td:last-child');
+                                    if (totalCell) {
+                                        totalCell.textContent = `₪${parseFloat(data.total_payment.replace(/,/g, '')).toFixed(2)}`;
+                                    }
+                                }
+                                // Show success message
+                                const toast = document.createElement('div');
+                                toast.className = 'alert alert-success alert-dismissible fade show';
+                                toast.role = 'alert';
+                                toast.innerHTML = `
+                                    ${data.message || 'השכר המעודכן נשמר בהצלחה'}
+                                    <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                                        <span aria-hidden="true">&times;</span>
+                                    </button>
+                                `;
+                                document.body.appendChild(toast);
+                                setTimeout(() => {
+                                    $(toast).alert('close');
+                                }, 3000);
+                            } else {
+                                throw new Error(data.error || 'Failed to update hourly rate');
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error updating hourly rate:', error);
+                            alert('אירעה שגיאה בעדכון השכר: ' + error.message);
+                        });
+                    }
+                });
+            }
+        // Make instructor names clickable
+        if (e.target.classList.contains('instructor-link') || e.target.closest('.instructor-link')) {
+                e.preventDefault();
+                const link = e.target.classList.contains('instructor-link') ? e.target : e.target.closest('.instructor-link');
+                const instructorName = link.getAttribute('data-instructor');
+                const month = document.getElementById('month').value;
+                const year = document.getElementById('year').value;
+                
+                // Show loading state
+                const modalTitle = document.getElementById('instructorEventsModalLabel');
+                const eventsBody = document.getElementById('instructorEventsBody');
+                modalTitle.textContent = `טוען אירועים עבור ${instructorName}...`;
+                eventsBody.innerHTML = '<tr><td colspan="4" class="text-center">טוען נתונים...</td></tr>';
+                
+                // Show the modal
+                $('#instructorEventsModal').modal('show');
+                
+                // Fetch instructor events
+                fetch(`/api/get_instructor_events?instructor=${encodeURIComponent(instructorName)}&month=${month}&year=${year}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            modalTitle.textContent = `אירועים של ${instructorName}`;
+                            
+                            if (data.events && data.events.length > 0) {
+                                let html = '';
+                                data.events.forEach(event => {
+                                    html += `
+                                        <tr>
+                                            <td>${event.client || 'אין כותרת'}</td>
+                                            <td>${event.date}</td>
+                                            <td>${event.time}</td>
+                                            <td>${event.duration}</td>
+                                        </tr>
+                                    `;
+                                });
+                                eventsBody.innerHTML = html;
+                            } else {
+                                eventsBody.innerHTML = '<tr><td colspan="4" class="text-center">לא נמצאו אירועים לחודש זה</td></tr>';
+                            }
+                        } else {
+                            modalTitle.textContent = 'שגיאה';
+                            eventsBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger">${data.error || 'אירעה שגיאה בטעינת הנתונים'}</td></tr>`;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching instructor events:', error);
+                        modalTitle.textContent = 'שגיאה';
+                        eventsBody.innerHTML = '<tr><td colspan="4" class="text-center text-danger">אירעה שגיאה בטעינת הנתונים</td></tr>';
+                    });
+            }
+        });
+    });
+</script>
+
+<script>
+    // Function to export table data to Google Sheets
+    async function exportToExcel() {
+        try {
+            const exportBtn = document.querySelector('.btn-primary');
+            if (exportBtn) {
+                exportBtn.disabled = true;
+                exportBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> מייצא...';
+            }
+            
+            // Get the table rows
+            const rows = document.querySelectorAll('table tbody tr');
+            const paymentData = [];
+            
+            // Extract data from each row
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length >= 6) {
+                    paymentData.push({
+                        instructor: cells[0]?.querySelector('.instructor-link')?.textContent.trim() || '',
+                        total_hours: cells[1]?.textContent.trim() || '0',
+                        by_client: cells[2]?.textContent.trim() || '',
+                        client: cells[3]?.textContent.trim() || '',
+                        hourly_rate: (cells[4]?.textContent || '').replace(/[^0-9.]/g, ''),
+                        summary: (cells[5]?.textContent || '').replace(/[^0-9.]/g, '')
+                    });
+                }
+            });
+            
+            if (paymentData.length === 0) {
+                throw new Error('No data to export');
+            }
+            
+            // Prepare the export data
+            const exportData = {
+                month: parseInt('{{ selected_month }}'),
+                year: parseInt('{{ selected_year }}'),
+                data: paymentData
+            };
+            
+            // Send data to the server for export
+            const response = await fetch('/api/export_payments', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(exportData)
+            });
+            
+            const result = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(result.error || 'Failed to export data');
+            }
+            
+            showToast('הנתונים יוצאו בהצלחה לגיליון Google Sheets', false);
+            
+        } catch (error) {
+            console.error('Export error:', error);
+            showToast(`שגיאה בייצוא: ${error.message || 'אירעה שגיאה לא צפויה'}`, true);
+        } finally {
+            const exportBtn = document.querySelector('.btn-primary');
+            if (exportBtn) {
+                exportBtn.disabled = false;
+                exportBtn.innerHTML = '<i class="fas fa-file-export ml-2"></i>ייצא לאקסל';
+            }
+        }
     }
     
     // Format numbers with commas as thousand separators

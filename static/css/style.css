@@ -289,6 +289,41 @@ h1, h2, h3, h4, h5, h6 {
     background-color: white;
     font-family: Arial, sans-serif;
     direction: rtl; /* RTL for the table itself */
+
+    /* Instructor links in payments table */
+    .instructor-link {
+        color: #007bff;
+        text-decoration: none;
+        font-weight: 500;
+        transition: color 0.2s;
+    }
+
+    .instructor-link:hover {
+        color: #0056b3;
+        text-decoration: underline;
+        cursor: pointer;
+    }
+
+    /* Instructor events modal */
+    #instructorEventsTable th {
+        text-align: center;
+        background-color: #f8f9fa;
+    }
+
+    #instructorEventsTable td {
+        vertical-align: middle;
+        text-align: center;
+    }
+
+    #instructorEventsModal .modal-header {
+        border-bottom: 1px solid #dee2e6;
+        background-color: #f8f9fa;
+    }
+
+    #instructorEventsModal .modal-footer {
+        border-top: 1px solid #dee2e6;
+        background-color: #f8f9fa;
+    }
 }
 
 .clients-table th, 

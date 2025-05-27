@@ -372,11 +372,26 @@ def get_payment_data(month, year):
         
         events = events_result.get('items', [])
         
-        # Process events into payment data
+        # Get valid clients for filtering
+        valid_clients = get_client_names_from_sheets()
+        
+        # Filter events by valid client names
+        filtered_events = []
+        for event in events:
+            title = event.get('summary', '').strip()
+            # Find matching client name anywhere in the title
+            for client in valid_clients:
+                if client in title:
+                    event['matched_client'] = client  # Store matched client name
+                    filtered_events.append(event)
+                    break
+        
+        # Process filtered events into payment data
         instructor_data = {}
         instructors_map = create_instructors_map()
+        valid_instructors = set(instructors_map.values())  # Get set of valid instructor names
         
-        for event in events:
+        for event in filtered_events:
             # Skip events without an organizer
             if 'organizer' not in event or 'email' not in event['organizer']:
                 continue
@@ -385,6 +400,10 @@ def get_payment_data(month, year):
             organizer_email = event['organizer']['email']
             username = organizer_email.split('@')[0]
             instructor_name = instructors_map.get(username, username)
+            
+            # Skip if instructor not in valid instructors
+            if instructor_name not in valid_instructors:
+                continue
             
             # Calculate event duration in hours
             start = event.get('start', {}).get('dateTime', event.get('start', {}).get('date'))
@@ -400,15 +419,17 @@ def get_payment_data(month, year):
             except (ValueError, TypeError):
                 continue
             
-            # Get client name from event title
-            client_name = event.get('summary', '').split(' - ')[0]
+            # Use the pre-matched client name from the filter
+            client_name = event.get('matched_client', 'Unknown Client')
             
             # Initialize instructor data if not exists
             if instructor_name not in instructor_data:
+                # Get the saved hourly rate or use default (200)
+                hourly_rate = get_hourly_rate(instructor_name, month, year)
                 instructor_data[instructor_name] = {
                     'total_hours': 0,
                     'by_client': {},
-                    'hourly_rate': 200,  # Default hourly rate
+                    'hourly_rate': hourly_rate,  # Use saved or default rate
                     'total_payment': 0
                 }
             
@@ -431,15 +452,13 @@ def get_payment_data(month, year):
         total_payment = 0
         
         for instructor_name, data in instructor_data.items():
-            # Format client breakdown
-            client_breakdown = []
-            for client, hours in data['by_client'].items():
-                client_breakdown.append(f"{client}: {hours:.1f} שעות")
+            # Format client breakdown - show only numeric hours without 'שעות'
+            client_hours = [f"{hours:.1f}" for hours in data['by_client'].values()]
             
             records.append({
                 'instructor': instructor_name,
                 'total_hours': f"{data['total_hours']:.1f}",
-                'by_client': '<br>'.join(client_breakdown),
+                'by_client': '<br>'.join(client_hours),  # Just the numeric values
                 'client': '<br>'.join(data['by_client'].keys()),
                 'hourly_rate': f"{data['hourly_rate']:,.2f}",
                 'total_payment': f"{data['total_payment']:,.2f}"
@@ -761,6 +780,87 @@ def parse_iso_datetime(dt_str):
     except (ValueError, TypeError) as e:
         print(f"Error parsing datetime {dt_str}: {str(e)}")
         return None
+
+def get_hourly_rate(instructor_name, month, year):
+    """Get the hourly rate for an instructor from the 'שכר שעה' worksheet."""
+    try:
+        # Get the Google Sheets client
+        gc = get_gspread_client()
+        if not gc:
+            print("Failed to get Google Sheets client")
+            return None
+            
+        # Try to open the 'שכר שעה' worksheet or create it if it doesn't exist
+        try:
+            worksheet = gc.open_by_key(os.getenv('PAYMENT_SPREADSHEET_ID')).worksheet('שכר שעה')
+        except gspread.WorksheetNotFound:
+            # Create the worksheet if it doesn't exist
+            spreadsheet = gc.open_by_key(os.getenv('PAYMENT_SPREADSHEET_ID'))
+            worksheet = spreadsheet.add_worksheet(title='שכר שעה', rows=100, cols=3)
+            # Add headers
+            worksheet.append_row(['מדריך', 'חודש', 'שכר שעה'])
+            
+        # Search for the instructor's rate
+        records = worksheet.get_all_records()
+        for record in records:
+            if (record.get('מדריך') == instructor_name and 
+                int(record.get('חודש', 0)) == month and 
+                int(record.get('שנה', 0)) == year):
+                return float(record.get('שכר שעה', 200))
+                
+        return 200  # Default rate if not found
+        
+    except Exception as e:
+        print(f"Error getting hourly rate: {e}")
+        return 200  # Default rate on error
+
+def save_hourly_rate(instructor_name, month, year, rate):
+    """Save the hourly rate for an instructor to the 'שכר שעה' worksheet."""
+    try:
+        # Get the Google Sheets client
+        gc = get_gspread_client()
+        if not gc:
+            print("Failed to get Google Sheets client")
+            return False
+            
+        # Try to open the 'שכר שעה' worksheet or create it if it doesn't exist
+        try:
+            worksheet = gc.open_by_key(os.getenv('PAYMENT_SPREADSHEET_ID')).worksheet('שכר שעה')
+        except gspread.WorksheetNotFound:
+            # Create the worksheet if it doesn't exist
+            spreadsheet = gc.open_by_key(os.getenv('PAYMENT_SPREADSHEET_ID'))
+            worksheet = spreadsheet.add_worksheet(title='שכר שעה', rows=100, cols=3)
+            # Add headers
+            worksheet.append_row(['מדריך', 'חודש', 'שנה', 'שכר שעה'])
+        
+        # Get all records
+        records = worksheet.get_all_records()
+        
+        # Check if the record exists
+        row_num = None
+        for i, record in enumerate(records, start=2):  # Start from row 2 (after header)
+            if (record.get('מדריך') == instructor_name and 
+                int(record.get('חודש', 0)) == month and 
+                int(record.get('שנה', 0)) == year):
+                row_num = i
+                break
+                
+        # Prepare the data to save
+        data = [instructor_name, month, year, rate]
+        
+        if row_num:
+            # Update existing record
+            for i, value in enumerate(data, start=1):
+                worksheet.update_cell(row_num, i, value)
+        else:
+            # Add new record
+            worksheet.append_row(data)
+            
+        return True
+        
+    except Exception as e:
+        print(f"Error saving hourly rate: {e}")
+        return False
 
 def get_calendar_service():
     """Get an authorized Google Calendar API service instance using service account."""
@@ -1365,6 +1465,7 @@ def export_billing_to_sheets():
 
 @app.route('/api/get_rates_discounts', methods=['GET'])
 def get_rates_discounts():
+    """Fetch rates and discounts for a specific month and year."""
     try:
         month = int(request.args.get('month'))
         year = int(request.args.get('year'))
@@ -1584,6 +1685,378 @@ def get_client_events():
         return jsonify({
             'status': 'error',
             'message': str(e)
+        }), 500
+
+@app.route('/api/get_instructor_events', methods=['GET'])
+def get_instructor_events():
+    """Fetch events for a specific instructor and month."""
+    try:
+        instructor_name = request.args.get('instructor')
+        month = int(request.args.get('month'))
+        year = int(request.args.get('year'))
+        
+        if not instructor_name:
+            return jsonify({'error': 'Instructor name is required'}), 400
+        
+        # Calculate date range for the month
+        start_date = datetime(year, month, 1).isoformat() + 'Z'
+        if month == 12:
+            end_date = datetime(year + 1, 1, 1).isoformat() + 'Z'
+        else:
+            end_date = datetime(year, month + 1, 1).isoformat() + 'Z'
+        
+        # Fetch events from calendar
+        service = get_calendar_service()
+        if not service:
+            return jsonify({'error': 'Failed to connect to Google Calendar'}), 500
+            
+        events_result = service.events().list(
+            calendarId=os.getenv('CALENDAR_ID'),
+            timeMin=start_date,
+            timeMax=end_date,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        
+        events = events_result.get('items', [])
+        
+        # Filter events for this instructor
+        instructor_events = []
+        instructors_map = create_instructors_map()
+        
+        for event in events:
+            # Skip events without an organizer
+            if 'organizer' not in event or 'email' not in event['organizer']:
+                continue
+                
+            # Get instructor name from email
+            organizer_email = event['organizer']['email']
+            username = organizer_email.split('@')[0]
+            event_instructor = instructors_map.get(username, username)
+            
+            if event_instructor == instructor_name:
+                # Format event data
+                start = event.get('start', {}).get('dateTime', event.get('start', {}).get('date'))
+                end = event.get('end', {}).get('dateTime', event.get('end', {}).get('date'))
+                
+                try:
+                    start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                    end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
+                    duration_hours = (end_dt - start_dt).total_seconds() / 3600
+                    
+                    instructor_events.append({
+                        'title': event.get('summary', 'אין כותרת'),
+                        'date': start_dt.strftime('%d/%m/%Y'),
+                        'time': f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}",
+                        'duration': f"{duration_hours:.1f}",
+                        'client': event.get('summary', '')
+                    })
+                except (ValueError, AttributeError):
+                    continue
+        
+        return jsonify({
+            'success': True,
+            'events': instructor_events
+        })
+        
+    except Exception as e:
+        print(f"Error fetching instructor events: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/export_payments', methods=['POST'])
+def export_payments_to_sheets():
+    try:
+        data = request.json
+        month = int(data.get('month'))
+        year = int(data.get('year'))
+        payment_data = data.get('data', [])
+        
+        if not payment_data:
+            return jsonify({'success': False, 'error': 'No data to export'}), 400
+        
+        # Get Hebrew month name
+        hebrew_months = [
+            'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+            'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'
+        ]
+        worksheet_name = f"{hebrew_months[month-1]} {year}"
+        
+        # Get Google Sheets client
+        gc = get_gspread_client()
+        spreadsheet_id = os.getenv('payment_SPREADSHEET_ID')
+        if not spreadsheet_id:
+            return jsonify({'success': False, 'error': 'Payment spreadsheet ID not configured'}), 500
+            
+        spreadsheet = gc.open_by_key(spreadsheet_id)
+        
+        # Define headers in the specified RTL order
+        headers = [
+            'סיכום', 'שכר שעה', 'לקוח', 'לפי לקוח', 'סהכ שעות', 'מדריך'
+        ]
+        
+        # Delete existing worksheet if it exists
+        try:
+            worksheet = spreadsheet.worksheet(worksheet_name)
+            spreadsheet.del_worksheet(worksheet)
+        except gspread.exceptions.WorksheetNotFound:
+            pass  # Worksheet doesn't exist, which is fine
+            
+        # Create a new worksheet with exact number of rows needed
+        worksheet = spreadsheet.add_worksheet(
+            title=worksheet_name,
+            rows=len(payment_data) + 1,  # +1 for header
+            cols=6  # Exactly 6 columns as requested
+        )
+        
+        # Add headers to the worksheet
+        worksheet.append_row(headers)
+        
+        # Apply header formatting
+        header_format = {
+            'textFormat': {
+                'bold': True,
+                'foregroundColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}  # Blue color
+            },
+            'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9},  # Light gray
+            'horizontalAlignment': 'CENTER',
+            'verticalAlignment': 'MIDDLE',
+            'wrapStrategy': 'WRAP'  # Ensure text wraps in cells
+        }
+        worksheet.format('A1:F1', header_format)
+        
+        # Prepare data for export
+        rows = []
+        for item in payment_data:
+            # Get values exactly as they appear in the table
+            def get_value(key, default=''):
+                value = item.get(key, default)
+                if value is None:
+                    return default
+                return str(value)
+            
+            # Get all values with proper newline handling
+            summary = get_value('summary')
+            hourly_rate = get_value('hourly_rate')
+            client = get_value('client')
+            by_client = get_value('by_client')
+            total_hours = get_value('total_hours')
+            instructor = get_value('instructor')
+            
+            # Format numbers (remove thousands separators)
+            def format_number(value):
+                if not value:
+                    return ''
+                return str(value).replace(',', '').strip()
+            
+            # Format numeric fields
+            formatted_summary = format_number(summary)
+            formatted_hourly_rate = format_number(hourly_rate)
+            formatted_total_hours = format_number(total_hours)
+            
+            # Create the row with proper ordering
+            # The order is: סיכום, שכר שעה, לקוח, לפי לקוח, סהכ שעות, מדריך
+            row = [
+                formatted_summary,    # סיכום
+                formatted_hourly_rate, # שכר שעה
+                client,               # לקוח
+                by_client,            # לפי לקוח
+                formatted_total_hours, # סהכ שעות
+                instructor            # מדריך
+            ]
+            rows.append(row)
+        
+        # Update the worksheet with new data
+        if rows:
+            # Update cells in batch to handle newlines properly
+            cell_list = []
+            for i, row in enumerate(rows, start=2):  # Start from row 2 (after header)
+                for j, value in enumerate(row, start=1):  # Columns A-F (1-6)
+                    cell = gspread.Cell(
+                        row=i,
+                        col=j,
+                        value=value
+                    )
+                    cell_list.append(cell)
+            
+            # Update all cells at once
+            worksheet.update_cells(cell_list, value_input_option='USER_ENTERED')
+        
+        # Apply formatting to data rows
+        if rows:
+            # Define the data range (A2 to F{last_row})
+            data_range = f'A2:F{len(rows) + 1}'
+            last_row = len(rows) + 1  # +1 because we start from row 2
+            
+            # Format all data cells to have white background and center alignment
+            worksheet.format(data_range, {
+                'backgroundColor': {'red': 1.0, 'green': 1.0, 'blue': 1.0},  # White background
+                'horizontalAlignment': 'CENTER',
+                'verticalAlignment': 'MIDDLE',
+                'wrapStrategy': 'WRAP',
+                'borders': {
+                    'top': {'style': 'SOLID'},
+                    'bottom': {'style': 'SOLID'},
+                    'left': {'style': 'SOLID'},
+                    'right': {'style': 'SOLID'}
+                }
+            })
+            
+            # Format headers
+            header_format = {
+                'textFormat': {
+                    'bold': True,
+                    'foregroundColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}  # Blue color
+                },
+                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9},  # Light gray
+                'horizontalAlignment': 'CENTER',
+                'verticalAlignment': 'MIDDLE'
+            }
+            worksheet.format('A1:F1', header_format)
+            
+            # Format specific columns
+            # Column A: סיכום - bold #7f007f
+            worksheet.format(f'A2:A{last_row}', {
+                'textFormat': {
+                    'bold': True,
+                    'foregroundColor': {'red': 0.5, 'green': 0.0, 'blue': 0.5}  # #7f007f
+                },
+                'numberFormat': {'type': 'TEXT'},
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column B: שכר שעה - regular black
+            worksheet.format(f'B2:B{last_row}', {
+                'textFormat': {'foregroundColor': {'red': 0, 'green': 0, 'blue': 0}},
+                'numberFormat': {'type': 'NUMBER', 'pattern': '0'},
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column C: לקוח - bold #7f007f
+            worksheet.format(f'C2:C{last_row}', {
+                'textFormat': {
+                    'bold': True,
+                    'foregroundColor': {'red': 0.5, 'green': 0.0, 'blue': 0.5}  # #7f007f
+                },
+                'horizontalAlignment': 'CENTER',
+                'wrapStrategy': 'WRAP'
+            })
+            
+            # Column D: לפי לקוח - bold #7f007f
+            worksheet.format(f'D2:D{last_row}', {
+                'textFormat': {
+                    'bold': True,
+                    'foregroundColor': {'red': 0.5, 'green': 0.0, 'blue': 0.5}  # #7f007f
+                },
+                'horizontalAlignment': 'CENTER',
+                'wrapStrategy': 'WRAP'
+            })
+            
+            # Column E: סהכ שעות - bold #7f007f
+            worksheet.format(f'E2:E{last_row}', {
+                'textFormat': {
+                    'bold': True,
+                    'foregroundColor': {'red': 0.5, 'green': 0.0, 'blue': 0.5}  # #7f007f
+                },
+                'numberFormat': {'type': 'NUMBER', 'pattern': '0.0'},
+                'horizontalAlignment': 'CENTER'
+            })
+            
+            # Column F: מדריך - not bold #007f00
+            worksheet.format(f'F2:F{last_row}', {
+                'textFormat': {
+                    'bold': False,
+                    'foregroundColor': {'red': 0.0, 'green': 0.5, 'blue': 0.0}  # #007f00
+                },
+                'horizontalAlignment': 'CENTER',
+                'wrapStrategy': 'WRAP'
+            })
+        
+        # Set column widths (in pixels)
+        column_widths = [
+            {'startColumn': 1, 'endColumn': 2, 'width': 100},  # סיכום
+            {'startColumn': 2, 'endColumn': 3, 'width': 80},   # שכר שעה
+            {'startColumn': 3, 'endColumn': 4, 'width': 150},  # לקוח
+            {'startColumn': 4, 'endColumn': 5, 'width': 150},  # לפי לקוח
+            {'startColumn': 5, 'endColumn': 6, 'width': 80},   # סהכ שעות
+            {'startColumn': 6, 'endColumn': 7, 'width': 150}   # מדריך
+        ]
+        
+        # Apply column widths
+        for width_setting in column_widths:
+            worksheet.set_column(
+                width_setting['startColumn'] - 1,  # Convert to 0-based index
+                width_setting['endColumn'] - 1,
+                width_setting['width'] / 7  # Convert pixels to character width (approximate)
+            )
+        
+        # Set row heights to auto (adjusts to content)
+        worksheet.freeze(1, 0)  # Freeze header row
+        worksheet.set_basic_filter()  # Add filter to header row
+        
+        return jsonify({
+            'success': True,
+            'message': f'Data exported successfully to {worksheet_name}'
+        })
+        
+    except Exception as e:
+        print(f"Error exporting payments to Google Sheets: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to export data: {str(e)}'
+        }), 500
+
+@app.route('/api/update_hourly_rate', methods=['POST'])
+def update_hourly_rate():
+    """Update the hourly rate for an instructor."""
+    try:
+        data = request.get_json()
+        instructor_name = data.get('instructor')
+        month = int(data.get('month'))
+        year = int(data.get('year'))
+        hourly_rate = int(round(float(data.get('hourly_rate', 0))))  # Round to nearest integer
+        
+        if not instructor_name:
+            return jsonify({'success': False, 'error': 'Instructor name is required'}), 400
+        
+        # Save the hourly rate to the 'שכר שעה' worksheet
+        if not save_hourly_rate(instructor_name, month, year, hourly_rate):
+            return jsonify({'success': False, 'error': 'Failed to save hourly rate'}), 500
+        
+        # Get the billing data
+        billing_data = get_payment_data(month, year)
+        
+        # Find the instructor in the records and update their hourly rate
+        updated_record = None
+        for record in billing_data.get('records', []):
+            if record['instructor'] == instructor_name:
+                # Store as integer value without decimals
+                record['hourly_rate'] = f"{hourly_rate:,.0f}"
+                # Recalculate total payment
+                total_hours = float(record['total_hours'].replace(',', ''))
+                total_payment = total_hours * hourly_rate
+                # Format total payment with 2 decimal places for consistency
+                record['total_payment'] = f"{total_payment:,.2f}"
+                updated_record = record
+                break
+        
+        if not updated_record:
+            return jsonify({'success': False, 'error': 'Instructor not found in billing data'}), 404
+        
+        return jsonify({
+            'success': True,
+            'message': 'Hourly rate updated successfully',
+            'total_payment': updated_record.get('total_payment', '0.00'),  # Return updated total payment
+            'hourly_rate': f"{hourly_rate:,.0f}"  # Return the rounded hourly rate
+        })
+        
+    except Exception as e:
+        print(f"Error updating hourly rate: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
         }), 500
 
 if __name__ == '__main__':
