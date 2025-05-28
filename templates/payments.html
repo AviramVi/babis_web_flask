@@ -122,6 +122,7 @@
                                         data-instructor="{{ record.instructor }}"
                                         data-month="{{ selected_month }}"
                                         data-year="{{ selected_year }}"
+                                        data-original-value="{{ record.hourly_rate|replace(',', '')|float|int }}"
                                         style="cursor: pointer;">
                                         ₪{{ record.hourly_rate|int }}
                                     </td>

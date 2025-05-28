@@ -424,12 +424,12 @@ def get_payment_data(month, year):
             
             # Initialize instructor data if not exists
             if instructor_name not in instructor_data:
-                # Get the saved hourly rate or use default (200)
-                hourly_rate = get_hourly_rate(instructor_name, month, year)
+                # Try to get the saved hourly wage, or use default (200)
+                saved_hourly_wage = get_hourly_wage(instructor_name, month, year) or 200
                 instructor_data[instructor_name] = {
                     'total_hours': 0,
                     'by_client': {},
-                    'hourly_rate': hourly_rate,  # Use saved or default rate
+                    'hourly_rate': saved_hourly_wage,  # Use saved rate or default
                     'total_payment': 0
                 }
             
@@ -780,87 +780,6 @@ def parse_iso_datetime(dt_str):
     except (ValueError, TypeError) as e:
         print(f"Error parsing datetime {dt_str}: {str(e)}")
         return None
-
-def get_hourly_rate(instructor_name, month, year):
-    """Get the hourly rate for an instructor from the 'שכר שעה' worksheet."""
-    try:
-        # Get the Google Sheets client
-        gc = get_gspread_client()
-        if not gc:
-            print("Failed to get Google Sheets client")
-            return None
-            
-        # Try to open the 'שכר שעה' worksheet or create it if it doesn't exist
-        try:
-            worksheet = gc.open_by_key(os.getenv('PAYMENT_SPREADSHEET_ID')).worksheet('שכר שעה')
-        except gspread.WorksheetNotFound:
-            # Create the worksheet if it doesn't exist
-            spreadsheet = gc.open_by_key(os.getenv('PAYMENT_SPREADSHEET_ID'))
-            worksheet = spreadsheet.add_worksheet(title='שכר שעה', rows=100, cols=3)
-            # Add headers
-            worksheet.append_row(['מדריך', 'חודש', 'שכר שעה'])
-            
-        # Search for the instructor's rate
-        records = worksheet.get_all_records()
-        for record in records:
-            if (record.get('מדריך') == instructor_name and 
-                int(record.get('חודש', 0)) == month and 
-                int(record.get('שנה', 0)) == year):
-                return float(record.get('שכר שעה', 200))
-                
-        return 200  # Default rate if not found
-        
-    except Exception as e:
-        print(f"Error getting hourly rate: {e}")
-        return 200  # Default rate on error
-
-def save_hourly_rate(instructor_name, month, year, rate):
-    """Save the hourly rate for an instructor to the 'שכר שעה' worksheet."""
-    try:
-        # Get the Google Sheets client
-        gc = get_gspread_client()
-        if not gc:
-            print("Failed to get Google Sheets client")
-            return False
-            
-        # Try to open the 'שכר שעה' worksheet or create it if it doesn't exist
-        try:
-            worksheet = gc.open_by_key(os.getenv('PAYMENT_SPREADSHEET_ID')).worksheet('שכר שעה')
-        except gspread.WorksheetNotFound:
-            # Create the worksheet if it doesn't exist
-            spreadsheet = gc.open_by_key(os.getenv('PAYMENT_SPREADSHEET_ID'))
-            worksheet = spreadsheet.add_worksheet(title='שכר שעה', rows=100, cols=3)
-            # Add headers
-            worksheet.append_row(['מדריך', 'חודש', 'שנה', 'שכר שעה'])
-        
-        # Get all records
-        records = worksheet.get_all_records()
-        
-        # Check if the record exists
-        row_num = None
-        for i, record in enumerate(records, start=2):  # Start from row 2 (after header)
-            if (record.get('מדריך') == instructor_name and 
-                int(record.get('חודש', 0)) == month and 
-                int(record.get('שנה', 0)) == year):
-                row_num = i
-                break
-                
-        # Prepare the data to save
-        data = [instructor_name, month, year, rate]
-        
-        if row_num:
-            # Update existing record
-            for i, value in enumerate(data, start=1):
-                worksheet.update_cell(row_num, i, value)
-        else:
-            # Add new record
-            worksheet.append_row(data)
-            
-        return True
-        
-    except Exception as e:
-        print(f"Error saving hourly rate: {e}")
-        return False
 
 def get_calendar_service():
     """Get an authorized Google Calendar API service instance using service account."""
@@ -1830,41 +1749,29 @@ def export_payments_to_sheets():
         # Prepare data for export
         rows = []
         for item in payment_data:
-            # Get values exactly as they appear in the table
-            def get_value(key, default=''):
-                value = item.get(key, default)
-                if value is None:
-                    return default
-                return str(value)
-            
-            # Get all values with proper newline handling
-            summary = get_value('summary')
-            hourly_rate = get_value('hourly_rate')
-            client = get_value('client')
-            by_client = get_value('by_client')
-            total_hours = get_value('total_hours')
-            instructor = get_value('instructor')
-            
-            # Format numbers (remove thousands separators)
-            def format_number(value):
-                if not value:
+            # Clean and format the data
+            def clean_text(text):
+                if not text:
                     return ''
-                return str(value).replace(',', '').strip()
+                # Replace HTML line breaks with newlines and clean up
+                return str(text).replace('<br>', '\n').replace('<br/>', '\n').strip()
             
-            # Format numeric fields
-            formatted_summary = format_number(summary)
-            formatted_hourly_rate = format_number(hourly_rate)
-            formatted_total_hours = format_number(total_hours)
+            # Get and clean each field
+            instructor = clean_text(item.get('instructor', ''))
+            total_hours = clean_text(item.get('total_hours', ''))
+            by_client = clean_text(item.get('by_client', ''))
+            client = clean_text(item.get('client', ''))
+            hourly_rate = clean_text(item.get('hourly_rate', ''))
+            summary = clean_text(item.get('summary', ''))
             
             # Create the row with proper ordering
-            # The order is: סיכום, שכר שעה, לקוח, לפי לקוח, סהכ שעות, מדריך
             row = [
-                formatted_summary,    # סיכום
-                formatted_hourly_rate, # שכר שעה
-                client,               # לקוח
-                by_client,            # לפי לקוח
-                formatted_total_hours, # סהכ שעות
-                instructor            # מדריך
+                summary,         # סיכום
+                hourly_rate,    # שכר שעה
+                client,         # לקוח
+                by_client,      # לפי לקוח
+                total_hours,    # סהכ שעות
+                instructor      # מדריך
             ]
             rows.append(row)
         
@@ -1888,90 +1795,43 @@ def export_payments_to_sheets():
         if rows:
             # Define the data range (A2 to F{last_row})
             data_range = f'A2:F{len(rows) + 1}'
-            last_row = len(rows) + 1  # +1 because we start from row 2
             
-            # Format all data cells to have white background and center alignment
-            worksheet.format(data_range, {
-                'backgroundColor': {'red': 1.0, 'green': 1.0, 'blue': 1.0},  # White background
+            # Common cell format
+            cell_format = {
                 'horizontalAlignment': 'CENTER',
                 'verticalAlignment': 'MIDDLE',
-                'wrapStrategy': 'WRAP',
+                'wrapStrategy': 'WRAP',  # Ensure text wraps in cells
                 'borders': {
                     'top': {'style': 'SOLID'},
                     'bottom': {'style': 'SOLID'},
                     'left': {'style': 'SOLID'},
                     'right': {'style': 'SOLID'}
                 }
-            })
-            
-            # Format headers
-            header_format = {
-                'textFormat': {
-                    'bold': True,
-                    'foregroundColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}  # Blue color
-                },
-                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9},  # Light gray
-                'horizontalAlignment': 'CENTER',
-                'verticalAlignment': 'MIDDLE'
             }
-            worksheet.format('A1:F1', header_format)
             
-            # Format specific columns
-            # Column A: סיכום - bold #7f007f
-            worksheet.format(f'A2:A{last_row}', {
-                'textFormat': {
-                    'bold': True,
-                    'foregroundColor': {'red': 0.5, 'green': 0.0, 'blue': 0.5}  # #7f007f
-                },
-                'numberFormat': {'type': 'TEXT'},
-                'horizontalAlignment': 'CENTER'
+            # Apply common format to all cells
+            worksheet.format(data_range, cell_format)
+            
+            # Apply specific formatting to columns
+            # סיכום (A) - Bold green
+            worksheet.format(f'A2:A{len(rows) + 1}', {
+                'textFormat': {'bold': True, 'foregroundColor': {'red': 0, 'green': 0.4, 'blue': 0}}
             })
             
-            # Column B: שכר שעה - regular black
-            worksheet.format(f'B2:B{last_row}', {
-                'textFormat': {'foregroundColor': {'red': 0, 'green': 0, 'blue': 0}},
-                'numberFormat': {'type': 'NUMBER', 'pattern': '0'},
-                'horizontalAlignment': 'CENTER'
+            # שכר שעה (B) - Regular black
+            worksheet.format(f'B2:B{len(rows) + 1}', {
+                'textFormat': {'foregroundColor': {'red': 0, 'green': 0, 'blue': 0}}
             })
             
-            # Column C: לקוח - bold #7f007f
-            worksheet.format(f'C2:C{last_row}', {
-                'textFormat': {
-                    'bold': True,
-                    'foregroundColor': {'red': 0.5, 'green': 0.0, 'blue': 0.5}  # #7f007f
-                },
-                'horizontalAlignment': 'CENTER',
-                'wrapStrategy': 'WRAP'
+            # לקוח (C) and לפי לקוח (D) - Purple
+            worksheet.format(f'C2:D{len(rows) + 1}', {
+                'textFormat': {'foregroundColor': {'red': 1, 'green': 0, 'blue': 1}},
+                'horizontalAlignment': 'RIGHT'  # Right align for RTL text
             })
             
-            # Column D: לפי לקוח - bold #7f007f
-            worksheet.format(f'D2:D{last_row}', {
-                'textFormat': {
-                    'bold': True,
-                    'foregroundColor': {'red': 0.5, 'green': 0.0, 'blue': 0.5}  # #7f007f
-                },
-                'horizontalAlignment': 'CENTER',
-                'wrapStrategy': 'WRAP'
-            })
-            
-            # Column E: סהכ שעות - bold #7f007f
-            worksheet.format(f'E2:E{last_row}', {
-                'textFormat': {
-                    'bold': True,
-                    'foregroundColor': {'red': 0.5, 'green': 0.0, 'blue': 0.5}  # #7f007f
-                },
-                'numberFormat': {'type': 'NUMBER', 'pattern': '0.0'},
-                'horizontalAlignment': 'CENTER'
-            })
-            
-            # Column F: מדריך - not bold #007f00
-            worksheet.format(f'F2:F{last_row}', {
-                'textFormat': {
-                    'bold': False,
-                    'foregroundColor': {'red': 0.0, 'green': 0.5, 'blue': 0.0}  # #007f00
-                },
-                'horizontalAlignment': 'CENTER',
-                'wrapStrategy': 'WRAP'
+            # סהכ שעות (E) and מדריך (F) - Bold green
+            worksheet.format(f'E2:F{len(rows) + 1}', {
+                'textFormat': {'bold': True, 'foregroundColor': {'red': 0, 'green': 0.4, 'blue': 0}}
             })
         
         # Set column widths (in pixels)
@@ -2008,6 +1868,89 @@ def export_payments_to_sheets():
             'error': f'Failed to export data: {str(e)}'
         }), 500
 
+def save_hourly_wage(instructor_name, month, year, hourly_wage):
+    """Save the hourly wage to Google Sheets."""
+    try:
+        # Get Google Sheets client
+        gc = get_gspread_client()
+        spreadsheet_id = os.getenv('payment_SPREADSHEET_ID')
+        
+        if not spreadsheet_id:
+            raise Exception('payment_SPREADSHEET_ID not found in environment variables')
+        
+        # Open the spreadsheet
+        spreadsheet = gc.open_by_key(spreadsheet_id)
+        
+        # Try to open the 'שכר שעה' worksheet, create if it doesn't exist
+        try:
+            worksheet = spreadsheet.worksheet('שכר שעה')
+        except gspread.WorksheetNotFound:
+            # Create the worksheet with headers if it doesn't exist
+            worksheet = spreadsheet.add_worksheet(title='שכר שעה', rows=1000, cols=5)
+            # Add headers
+            worksheet.append_row(['מדריך', 'חודש', 'שנה', 'שכר שעה', 'תאריך עדכון'])
+        
+        # Get all records
+        records = worksheet.get_all_records()
+        
+        # Check if there's an existing record for this instructor, month, and year
+        row_num = None
+        for i, record in enumerate(records, start=2):  # Start from row 2 (1-based)
+            if (str(record.get('מדריך', '')).strip() == instructor_name and 
+                int(record.get('חודש', 0)) == month and 
+                int(record.get('שנה', 0)) == year):
+                row_num = i
+                break
+        
+        # Prepare the row data
+        row_data = [instructor_name, month, year, hourly_wage, datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
+        
+        if row_num:
+            # Update existing record
+            for i, value in enumerate(row_data, start=1):
+                worksheet.update_cell(row_num, i, value)
+        else:
+            # Add new record
+            worksheet.append_row(row_data)
+        
+        return True
+    except Exception as e:
+        print(f"Error saving hourly wage: {e}")
+        return False
+
+def get_hourly_wage(instructor_name, month, year):
+    """Get the hourly wage for an instructor for a specific month and year."""
+    try:
+        # Get Google Sheets client
+        gc = get_gspread_client()
+        spreadsheet_id = os.getenv('payment_SPREADSHEET_ID')
+        
+        if not spreadsheet_id:
+            return None
+            
+        # Open the spreadsheet and worksheet
+        spreadsheet = gc.open_by_key(spreadsheet_id)
+        
+        try:
+            worksheet = spreadsheet.worksheet('שכר שעה')
+            records = worksheet.get_all_records()
+            
+            # Find the most recent record for this instructor, month, and year
+            for record in reversed(records):
+                if (str(record.get('מדריך', '')).strip() == instructor_name and 
+                    int(record.get('חודש', 0)) == month and 
+                    int(record.get('שנה', 0)) == year):
+                    return float(record.get('שכר שעה', 0))
+            
+            return None
+            
+        except gspread.WorksheetNotFound:
+            return None
+            
+    except Exception as e:
+        print(f"Error getting hourly wage: {e}")
+        return None
+
 @app.route('/api/update_hourly_rate', methods=['POST'])
 def update_hourly_rate():
     """Update the hourly rate for an instructor."""
@@ -2021,15 +1964,14 @@ def update_hourly_rate():
         if not instructor_name:
             return jsonify({'success': False, 'error': 'Instructor name is required'}), 400
         
-        # Save the hourly rate to the 'שכר שעה' worksheet
-        if not save_hourly_rate(instructor_name, month, year, hourly_rate):
-            return jsonify({'success': False, 'error': 'Failed to save hourly rate'}), 500
+        # Save the hourly wage to Google Sheets
+        if not save_hourly_wage(instructor_name, month, year, hourly_rate):
+            return jsonify({'success': False, 'error': 'Failed to save hourly wage'}), 500
         
         # Get the billing data
         billing_data = get_payment_data(month, year)
         
         # Find the instructor in the records and update their hourly rate
-        updated_record = None
         for record in billing_data.get('records', []):
             if record['instructor'] == instructor_name:
                 # Store as integer value without decimals
@@ -2039,16 +1981,12 @@ def update_hourly_rate():
                 total_payment = total_hours * hourly_rate
                 # Format total payment with 2 decimal places for consistency
                 record['total_payment'] = f"{total_payment:,.2f}"
-                updated_record = record
                 break
-        
-        if not updated_record:
-            return jsonify({'success': False, 'error': 'Instructor not found in billing data'}), 404
         
         return jsonify({
             'success': True,
             'message': 'Hourly rate updated successfully',
-            'total_payment': updated_record.get('total_payment', '0.00'),  # Return updated total payment
+            'total_payment': record.get('total_payment', '0.00'),  # Return updated total payment
             'hourly_rate': f"{hourly_rate:,.0f}"  # Return the rounded hourly rate
         })
         
