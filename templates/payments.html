@@ -6,10 +6,7 @@
     <div class="modal-dialog modal-lg" role="document">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="instructorEventsModalLabel">אירועים של מדריך</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="margin-right: auto; margin-left: 0;">
-                    <span aria-hidden="true">&times;</span>
-                </button>
+                <h5 class="modal-title w-100 text-center" id="instructorEventsModalLabel">אירועים של מדריך</h5>
             </div>
             <div class="modal-body">
                 <div class="table-responsive">
@@ -28,17 +25,17 @@
                     </table>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">סגור</button>
+            <div class="modal-footer justify-content-center">
+                <button type="button" class="btn btn-primary" id="exportInstructorEvents">ייצוא ל-HTML</button>
             </div>
         </div>
     </div>
 </div>
 
-<div class="container mt-4">
+<div class="container">
     <div class="row mb-4">
         <div class="col-12">
-            <h1 class="text-center mb-4">תשלומים</h1>
+            <h1 class="text-center mb-4 font-weight-bold">תשלומים</h1>
             
             <!-- Month/Year Selector -->
             <div class="row justify-content-center mb-4">
@@ -129,13 +126,13 @@
                     <div class="card-deck">
                         <div class="card text-white bg-primary">
                             <div class="card-body text-center">
-                                <h5 class="card-title">סה״כ שעות</h5>
+                                <h5 class="card-title">סה״כ שעות מדריכים</h5>
                                 <h2 class="card-text">{{ "%.1f"|format(total_hours) }}</h2>
                             </div>
                         </div>
                         <div class="card text-white bg-success">
                             <div class="card-body text-center">
-                                <h5 class="card-title">סה״כ תשלום</h5>
+                                <h5 class="card-title">סה״כ תשלומים</h5>
                                 <h2 class="card-text">₪{{ "{:,.2f}".format(total_payment) }}</h2>
                             </div>
                         </div>
@@ -167,7 +164,7 @@
         // Make hourly rate cells editable
         document.addEventListener('click', function(e) {
             const cell = e.target.closest('td.number-cell');
-            if (cell && cell.textContent.trim().startsWith('₪')) {
+            if (cell && cell.classList.contains('number-cell')) {
                 // Store the current value
                 const currentValue = parseFloat(cell.textContent.replace(/[^0-9.]/g, '')) || 0;
                 cell.dataset.originalValue = currentValue;
@@ -209,6 +206,30 @@
             }
         });
         
+        // Function to update the total payment summary
+        function updateTotalPayment() {
+            try {
+                let total = 0;
+                // Get all payment cells (last cell in each row)
+                const paymentCells = document.querySelectorAll('table tbody tr td:last-child');
+                
+                paymentCells.forEach(cell => {
+                    // Extract numeric value from cell (remove currency symbol and commas)
+                    const paymentText = cell.textContent.replace(/[^\d.-]/g, '');
+                    const payment = parseFloat(paymentText) || 0;
+                    total += payment;
+                });
+                
+                // Update the total payment in the summary card
+                const totalPaymentElement = document.querySelector('.bg-success .card-text');
+                if (totalPaymentElement) {
+                    totalPaymentElement.textContent = `₪${total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                }
+            } catch (error) {
+                console.error('Error updating total payment:', error);
+            }
+        }
+        
         // Function to save the hourly rate
         async function saveHourlyRate(cell, input) {
             const instructor = cell.dataset.instructor;
@@ -243,7 +264,10 @@
                         const row = cell.closest('tr');
                         const totalCell = row.querySelector('td:last-child');
                         if (totalCell) {
-                            totalCell.textContent = `₪${parseFloat(data.total_payment.replace(/,/g, '')).toFixed(2)}`;
+                            const formattedPayment = `₪${parseFloat(data.total_payment.replace(/,/g, '')).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                            totalCell.textContent = formattedPayment;
+                            // Update the total payment summary
+                            updateTotalPayment();
                         }
                     }
                     // Show success message
@@ -380,20 +404,30 @@
                     .then(data => {
                         if (data.success) {
                             modalTitle.textContent = `אירועים של ${instructorName}`;
-                            
                             if (data.events && data.events.length > 0) {
-                                let html = '';
-                                data.events.forEach(event => {
-                                    html += `
-                                        <tr>
-                                            <td>${event.client || 'אין כותרת'}</td>
-                                            <td>${event.date}</td>
-                                            <td>${event.time}</td>
-                                            <td>${event.duration}</td>
-                                        </tr>
-                                    `;
-                                });
-                                eventsBody.innerHTML = html;
+                                let html = "";
+                                const filteredEvents = data.events.filter(event => 
+                                    event.client && 
+                                    event.client.trim() !== "" && 
+                                    event.client !== "אין כותרת" && 
+                                    event.client !== "אין לקוח"
+                                );
+                                
+                                if (filteredEvents.length > 0) {
+                                    filteredEvents.forEach(event => {
+                                        html += `
+                                            <tr>
+                                                <td>${event.client}</td>
+                                                <td>${event.date}</td>
+                                                <td>${event.time}</td>
+                                                <td>${event.duration}</td>
+                                            </tr>
+                                        `;
+                                    });
+                                    eventsBody.innerHTML = html;
+                                } else {
+                                    eventsBody.innerHTML = '<tr><td colspan="4" class="text-center">לא נמצאו אירועים עם שם לקוח לחודש זה</td></tr>';
+                                }
                             } else {
                                 eventsBody.innerHTML = '<tr><td colspan="4" class="text-center">לא נמצאו אירועים לחודש זה</td></tr>';
                             }
@@ -599,7 +633,73 @@
     
     // Format numbers with commas as thousand separators
     document.addEventListener('DOMContentLoaded', function() {
-        // Add any additional initialization code here
+        // Add event listener for export button
+        document.getElementById('exportInstructorEvents').addEventListener('click', exportInstructorEventsToHtml);
     });
+    
+    // Function to export instructor events to HTML
+    function exportInstructorEventsToHtml() {
+        const modal = document.getElementById('instructorEventsModal');
+        const title = document.getElementById('instructorEventsModalLabel');
+        const eventsTable = document.getElementById('instructorEventsTable');
+        
+        if (!modal || !title || !eventsTable) {
+            console.error('Required elements not found for export');
+            return;
+        }
+        
+        try {
+            // Create a clone of the table to avoid modifying the original
+            const tableClone = eventsTable.cloneNode(true);
+            
+            // Create HTML content
+            const htmlContent = `
+                <!DOCTYPE html>
+                <html dir="rtl">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>${title.textContent}</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; margin: 20px; }
+                        h1 { text-align: center; color: #333; }
+                        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                        th, td { border: 1px solid #ddd; padding: 8px; text-align: right; }
+                        th { background-color: #f2f2f2; font-weight: bold; }
+                        tr:nth-child(even) { background-color: #f9f9f9; }
+                        .header { text-align: center; margin-bottom: 20px; }
+                        .date { text-align: left; font-size: 0.9em; color: #666; }
+                    </style>
+                </head>
+                <body>
+                    <div class="header">
+                        <h1>${title.textContent}</h1>
+                        <div class="date">נוצר בתאריך: ${new Date().toLocaleString('he-IL')}</div>
+                    </div>
+                    ${tableClone.outerHTML}
+                </body>
+                </html>`;
+            
+            // Create a blob and download link
+            const blob = new Blob([htmlContent], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `אירועי_מדריך_${title.textContent.replace(/[^\u0590-\u05FFa-zA-Z0-9_\-]/g, '_')}.html`;
+            document.body.appendChild(a);
+            a.click();
+            
+            // Clean up
+            setTimeout(() => {
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            }, 100);
+            
+            showToast('הקובץ הורד בהצלחה');
+            
+        } catch (error) {
+            console.error('Error exporting events:', error);
+            showToast('אירעה שגיאה ביצירת הקובץ', true);
+        }
+    }
 </script>
 {% endblock %}

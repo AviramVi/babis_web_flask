@@ -575,6 +575,25 @@ h1, h2, h3, h4, h5, h6 {
     padding: 2px 0;
 }
 
+/* Payment Table Styles */
+table.table tbody tr td:nth-child(3),
+table.table tbody tr td:nth-child(4) {
+    color: #ff00ff; /* Magenta color */
+}
+
+table.table tbody tr td:nth-child(1),
+table.table tbody tr td:nth-child(6) {
+    color: #006600; /* Dark green color for סיכום and מדריך */
+    font-weight: bold;
+}
+
+/* Summary cards styles */
+.card-deck .card .card-body .card-text,
+.card-deck .card .card-body .card-title {
+    color: #d3d3d3 !important; /* Light gray color for summary text */
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5); /* Add shadow for better readability */
+}
+
 /* Payment page styles */
 #dateForm {
     display: flex;

@@ -1017,6 +1017,12 @@ def calendar_page():
     # Days in month
     days_in_month = pycalendar.monthrange(year, month)[1]
 
+    # Hebrew months list with 1-based indexing (index 0 is empty)
+    hebrew_months_list = [
+        "", "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
+        "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"
+    ]
+    
     return render_template(
         'calendar.html',
         year=year,
@@ -1024,6 +1030,7 @@ def calendar_page():
         month_name=hebrew_months[month],
         hebrew_days=hebrew_days,
         days_in_month=days_in_month,
+        hebrew_months=hebrew_months_list,
         events_by_day=events_by_day,
         today=date.today()
     )
@@ -1108,9 +1115,45 @@ def export_billing_to_sheets():
             worksheet = spreadsheet.worksheet(worksheet_name)
             worksheet_fresh = False
         except gspread.exceptions.WorksheetNotFound:
-            # Create a new worksheet with headers and formatting
-            worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=1000, cols=20)
+            # Create a new worksheet with headers and formatting (only 7 columns A-G)
+            worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=1000, cols=7)
             worksheet.append_row(headers)
+            
+            # Set column widths (in pixels, approximate values for good fit)
+            # Column widths: A: 80, B: 80, C: 100, D: 200, E: 150, F: 100, G: 200
+            column_widths = [
+                {'startColumnIndex': 0, 'endColumnIndex': 1, 'pixelSize': 150},   # Column A
+                {'startColumnIndex': 1, 'endColumnIndex': 2, 'pixelSize': 80},   # Column B
+                {'startColumnIndex': 2, 'endColumnIndex': 3, 'pixelSize': 100},  # Column C
+                {'startColumnIndex': 3, 'endColumnIndex': 4, 'pixelSize': 200},  # Column D
+                {'startColumnIndex': 4, 'endColumnIndex': 5, 'pixelSize': 150},  # Column E
+                {'startColumnIndex': 5, 'endColumnIndex': 6, 'pixelSize': 100},  # Column F
+                {'startColumnIndex': 6, 'endColumnIndex': 7, 'pixelSize': 200}   # Column G
+            ]
+            
+            # Apply column widths in a batch update
+            body = {
+                'requests': [{
+                    'updateDimensionProperties': {
+                        'range': {
+                            'sheetId': worksheet.id,
+                            'dimension': 'COLUMNS',
+                            'startIndex': width['startColumnIndex'],
+                            'endIndex': width['endColumnIndex']
+                        },
+                        'properties': {
+                            'pixelSize': width['pixelSize']
+                        },
+                        'fields': 'pixelSize'
+                    }
+                } for width in column_widths]
+            }
+            
+            try:
+                spreadsheet.batch_update(body)
+            except Exception as e:
+                print(f"Warning: Could not set column widths: {e}")
+                
             worksheet_fresh = True
         
         # For existing worksheets, update headers if needed
@@ -1484,34 +1527,51 @@ def save_rate_discount():
             }
             worksheet.format('A1:E1', header_format)
         
-        # Check if a row with the same client, month, year, and change type already exists
+        # Get all records
         records = worksheet.get_all_records()
-        row_updated = False
+        existing_row = None
         
-        # Start from row 2 (1-based) since row 1 is headers
-        for i in range(2, len(records) + 2):
+        # Find if a matching record already exists
+        for i, record in enumerate(records, start=2):  # Start from row 2 (1-based)
             try:
-                client = worksheet.cell(i, 1).value
-                record_month = worksheet.cell(i, 2).value
-                record_year = worksheet.cell(i, 3).value
-                record_type = worksheet.cell(i, 4).value
-                
-                if (client == client_name and 
-                    str(record_month) == str(month) and 
-                    str(record_year) == str(year) and 
-                    record_type == change_type):
+                if (record['לקוח'] == client_name and 
+                    str(record['חודש']) == str(month) and 
+                    str(record['שנה']) == str(year) and 
+                    record['סוג'] == change_type):
                     
-                    # Update the existing row's value
-                    worksheet.update_cell(i, 5, new_value)
-                    row_updated = True
+                    existing_row = i
                     break
-                    
             except Exception as e:
                 print(f"Error checking row {i}: {str(e)}")
                 continue
         
-        # If no existing row was found, append a new one
-        if not row_updated:
+        # Determine the default value based on change_type
+        default_value = 0.0  # Default for הנחה %
+        if change_type == 'תמחור שעה':
+            default_value = 350.0  # Default for תמחור שעה
+        
+        # If the new value is the same as default, we'll remove the row if it exists
+        if abs(new_value - default_value) < 0.01:  # Using a small epsilon for float comparison
+            if existing_row:
+                # Delete the row
+                worksheet.delete_rows(existing_row)
+                return jsonify({
+                    'success': True,
+                    'message': f'{change_type} הוסר עבור {client_name} ({month_name} {year}) (הוחזר לערך ברירת מחדל)'
+                })
+            else:
+                # No row to delete and no action needed as it's already default
+                return jsonify({
+                    'success': True,
+                    'message': f'לא נדרש עדכון - {change_type} כבר בערך ברירת המחדל עבור {client_name} ({month_name} {year})'
+                })
+        
+        # If we have a non-default value, update or insert the row
+        if existing_row:
+            # Update existing row
+            worksheet.update_cell(existing_row, 5, new_value)  # Column 5 is 'ערך'
+        else:
+            # Insert new row
             worksheet.append_row([
                 client_name,  # לקוח
                 str(month),   # חודש (numeric)
@@ -1641,7 +1701,11 @@ def get_instructor_events():
         
         events = events_result.get('items', [])
         
-        # Filter events for this instructor
+        # Get valid client names from sheets
+        valid_client_names = get_client_names_from_sheets()
+        print(f"DEBUG: Found {len(valid_client_names)} valid client names")
+        
+        # Filter events for this instructor with valid client names
         instructor_events = []
         instructors_map = create_instructors_map()
         
@@ -1656,6 +1720,19 @@ def get_instructor_events():
             event_instructor = instructors_map.get(username, username)
             
             if event_instructor == instructor_name:
+                event_title = event.get('summary', '').strip()
+                
+                # Check if event title contains any valid client name
+                client_in_title = any(
+                    client_name in event_title
+                    for client_name in valid_client_names
+                    if client_name  # Skip empty client names
+                )
+                
+                if not client_in_title:
+                    print(f"DEBUG: Skipping event - no valid client in title: {event_title}")
+                    continue
+                    
                 # Format event data
                 start = event.get('start', {}).get('dateTime', event.get('start', {}).get('date'))
                 end = event.get('end', {}).get('dateTime', event.get('end', {}).get('date'))
@@ -1665,14 +1742,21 @@ def get_instructor_events():
                     end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
                     duration_hours = (end_dt - start_dt).total_seconds() / 3600
                     
+                    # Find the client name that matches the event title
+                    client_name = next(
+                        (name for name in valid_client_names if name in event_title),
+                        event_title  # Fallback to event title if no exact match found
+                    )
+                    
                     instructor_events.append({
-                        'title': event.get('summary', 'אין כותרת'),
+                        'title': event_title,
                         'date': start_dt.strftime('%d/%m/%Y'),
                         'time': f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}",
                         'duration': f"{duration_hours:.1f}",
-                        'client': event.get('summary', '')
+                        'client': client_name
                     })
-                except (ValueError, AttributeError):
+                except (ValueError, AttributeError) as e:
+                    print(f"Error processing event time: {e}")
                     continue
         
         return jsonify({
@@ -1725,12 +1809,46 @@ def export_payments_to_sheets():
             if worksheet.row_count > 0:
                 worksheet.clear()
         except gspread.exceptions.WorksheetNotFound:
-            # Create a new worksheet with exact number of rows needed
+            # Create a new worksheet with exactly the number of rows needed
+            num_rows = len(payment_data) + 1  # +1 for header row
             worksheet = spreadsheet.add_worksheet(
                 title=worksheet_name,
-                rows=max(len(payment_data) + 1, 100),  # +1 for header, minimum 100 rows
+                rows=num_rows,
                 cols=6  # Exactly 6 columns as requested
             )
+            
+            # Set column widths (in pixels) for better readability
+            column_widths = [
+                {'startColumnIndex': 0, 'endColumnIndex': 1, 'pixelSize': 200},  # Column A: סיכום
+                {'startColumnIndex': 1, 'endColumnIndex': 2, 'pixelSize': 100},  # Column B: שכר שעה
+                {'startColumnIndex': 2, 'endColumnIndex': 3, 'pixelSize': 200},  # Column C: לקוח
+                {'startColumnIndex': 3, 'endColumnIndex': 4, 'pixelSize': 100},  # Column D: לפי לקוח
+                {'startColumnIndex': 4, 'endColumnIndex': 5, 'pixelSize': 100},  # Column E: סהכ שעות
+                {'startColumnIndex': 5, 'endColumnIndex': 6, 'pixelSize': 200}   # Column F: מדריך
+            ]
+            
+            # Apply column widths in a batch update
+            body = {
+                'requests': [{
+                    'updateDimensionProperties': {
+                        'range': {
+                            'sheetId': worksheet.id,
+                            'dimension': 'COLUMNS',
+                            'startIndex': width['startColumnIndex'],
+                            'endIndex': width['endColumnIndex']
+                        },
+                        'properties': {
+                            'pixelSize': width['pixelSize']
+                        },
+                        'fields': 'pixelSize'
+                    }
+                } for width in column_widths]
+            }
+            
+            try:
+                spreadsheet.batch_update(body)
+            except Exception as e:
+                print(f"Warning: Could not set column widths: {e}")
         
         # Add headers to the worksheet
         worksheet.update('A1:F1', [headers])
@@ -1876,6 +1994,7 @@ def save_hourly_wage(instructor_name, month, year, hourly_wage):
             worksheet = spreadsheet.add_worksheet(title='שכר שעה', rows=1000, cols=5)
             # Add headers
             worksheet.append_row(['מדריך', 'חודש', 'שנה', 'שכר שעה', 'תאריך עדכון'])
+            return True  # No need to do anything else if the worksheet was just created
         
         # Get all records
         records = worksheet.get_all_records()
@@ -1888,6 +2007,15 @@ def save_hourly_wage(instructor_name, month, year, hourly_wage):
                 int(record.get('שנה', 0)) == year):
                 row_num = i
                 break
+        
+        DEFAULT_HOURLY_WAGE = 200  # Default hourly wage
+        
+        # If the wage is the default value, remove the record if it exists
+        if abs(float(hourly_wage) - DEFAULT_HOURLY_WAGE) < 0.01:  # Using a small epsilon for float comparison
+            if row_num:
+                worksheet.delete_rows(row_num)
+                return True
+            return True  # No action needed if it doesn't exist and we're setting to default
         
         # Prepare the row data
         row_data = [instructor_name, month, year, hourly_wage, datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
@@ -1906,14 +2034,20 @@ def save_hourly_wage(instructor_name, month, year, hourly_wage):
         return False
 
 def get_hourly_wage(instructor_name, month, year):
-    """Get the hourly wage for an instructor for a specific month and year."""
+    """Get the hourly wage for an instructor for a specific month and year.
+    
+    Returns:
+        float: The hourly wage, or 200 (default) if no specific wage is set
+    """
     try:
+        DEFAULT_HOURLY_WAGE = 200  # Default hourly wage
+        
         # Get Google Sheets client
         gc = get_gspread_client()
         spreadsheet_id = os.getenv('payment_SPREADSHEET_ID')
         
         if not spreadsheet_id:
-            return None
+            return DEFAULT_HOURLY_WAGE
             
         # Open the spreadsheet and worksheet
         spreadsheet = gc.open_by_key(spreadsheet_id)
@@ -1927,12 +2061,12 @@ def get_hourly_wage(instructor_name, month, year):
                 if (str(record.get('מדריך', '')).strip() == instructor_name and 
                     int(record.get('חודש', 0)) == month and 
                     int(record.get('שנה', 0)) == year):
-                    return float(record.get('שכר שעה', 0))
+                    return float(record.get('שכר שעה', DEFAULT_HOURLY_WAGE))
             
-            return None
+            return DEFAULT_HOURLY_WAGE  # Return default if no record found
             
         except gspread.WorksheetNotFound:
-            return None
+            return DEFAULT_HOURLY_WAGE  # Return default if worksheet doesn't exist
             
     except Exception as e:
         print(f"Error getting hourly wage: {e}")
