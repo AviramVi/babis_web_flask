@@ -637,7 +637,7 @@
                 <div class="calendar-cell{% if cell_date == today %} calendar-today{% endif %}">
                     <div class="calendar-day-num">{{ day }}</div>
                     {% set events = events_by_day.get(day, []) %}
-                    {% for event in events[:3] %}
+                    {% for event in events %}
                         <div class="calendar-event" 
                              onclick="showSimpleEventPopup('{{ event.full_event | tojson | safe }}');"
                              onmouseenter="startCalendarEventHoverPopup(this)"
@@ -651,9 +651,7 @@
                             {{ event.time }} {{ event.title }}
                         </div>
                     {% endfor %}
-                    {% if events|length > 3 %}
-                        <div class="calendar-event calendar-overflow">{{ day }} 🌷</div>
-                    {% endif %}
+
                 </div>
                 {% if (col + day) % 7 == 0 and day != days_in_month %}
                     </div><div class="calendar-row">

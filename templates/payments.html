@@ -67,26 +67,6 @@
                     </form>
                 </div>
             </div>
-            
-            <!-- Summary Cards -->
-            <div class="row mb-4">
-                <div class="col-md-6 offset-md-3">
-                    <div class="card-deck">
-                        <div class="card text-white bg-primary">
-                            <div class="card-body text-center">
-                                <h5 class="card-title">סה״כ שעות</h5>
-                                <h2 class="card-text">{{ "%.1f"|format(total_hours) }}</h2>
-                            </div>
-                        </div>
-                        <div class="card text-white bg-success">
-                            <div class="card-body text-center">
-                                <h5 class="card-title">סה״כ תשלום</h5>
-                                <h2 class="card-text">₪{{ "{:,.2f}".format(total_payment) }}</h2>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
     </div>
     
@@ -135,6 +115,30 @@
                                 {% endfor %}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Summary Cards -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="row justify-content-center">
+                <div class="col-md-8">
+                    <div class="card-deck">
+                        <div class="card text-white bg-primary">
+                            <div class="card-body text-center">
+                                <h5 class="card-title">סה״כ שעות</h5>
+                                <h2 class="card-text">{{ "%.1f"|format(total_hours) }}</h2>
+                            </div>
+                        </div>
+                        <div class="card text-white bg-success">
+                            <div class="card-body text-center">
+                                <h5 class="card-title">סה״כ תשלום</h5>
+                                <h2 class="card-text">₪{{ "{:,.2f}".format(total_payment) }}</h2>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
