@@ -124,9 +124,9 @@
                                         data-year="{{ selected_year }}"
                                         data-original-value="{{ record.hourly_rate|replace(',', '')|float|int }}"
                                         style="cursor: pointer;">
-                                        ₪{{ record.hourly_rate|int }}
+                                        {{ record.hourly_rate|int }}
                                     </td>
-                                    <td class="text-center font-weight-bold">₪{{ record.total_payment }}</td>
+                                    <td class="text-center font-weight-bold">{{ record.total_payment }}</td>
                                 </tr>
                                 {% else %}
                                 <tr>

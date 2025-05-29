@@ -453,13 +453,15 @@ def get_payment_data(month, year):
         
         for instructor_name, data in instructor_data.items():
             # Format client breakdown - show only numeric hours without 'שעות'
-            client_hours = [f"{hours:.1f}" for hours in data['by_client'].values()]
+            client_hours = [f"{hours:.1f}" for client, hours in data['by_client'].items()]
+            client_names = list(data['by_client'].keys())
             
+            # For HTML display, use both newlines and br tags to support both spreadsheet export and HTML display
             records.append({
                 'instructor': instructor_name,
                 'total_hours': f"{data['total_hours']:.1f}",
-                'by_client': '<br>'.join(client_hours),  # Just the numeric values
-                'client': '<br>'.join(data['by_client'].keys()),
+                'by_client': '\n'.join([f"{h}<br>" for h in client_hours]),  # Add <br> tags for HTML display
+                'client': '\n'.join([f"{c}<br>" for c in client_names]),  # Add <br> tags for HTML display
                 'hourly_rate': f"{data['hourly_rate']:,.2f}",
                 'total_payment': f"{data['total_payment']:,.2f}"
             })
@@ -1716,22 +1718,22 @@ def export_payments_to_sheets():
             'סיכום', 'שכר שעה', 'לקוח', 'לפי לקוח', 'סהכ שעות', 'מדריך'
         ]
         
-        # Delete existing worksheet if it exists
+        # Try to get the worksheet, create if it doesn't exist
         try:
             worksheet = spreadsheet.worksheet(worksheet_name)
-            spreadsheet.del_worksheet(worksheet)
+            # Clear existing content while preserving the worksheet
+            if worksheet.row_count > 0:
+                worksheet.clear()
         except gspread.exceptions.WorksheetNotFound:
-            pass  # Worksheet doesn't exist, which is fine
-            
-        # Create a new worksheet with exact number of rows needed
-        worksheet = spreadsheet.add_worksheet(
-            title=worksheet_name,
-            rows=len(payment_data) + 1,  # +1 for header
-            cols=6  # Exactly 6 columns as requested
-        )
+            # Create a new worksheet with exact number of rows needed
+            worksheet = spreadsheet.add_worksheet(
+                title=worksheet_name,
+                rows=max(len(payment_data) + 1, 100),  # +1 for header, minimum 100 rows
+                cols=6  # Exactly 6 columns as requested
+            )
         
         # Add headers to the worksheet
-        worksheet.append_row(headers)
+        worksheet.update('A1:F1', [headers])
         
         # Apply header formatting
         header_format = {
@@ -1749,20 +1751,13 @@ def export_payments_to_sheets():
         # Prepare data for export
         rows = []
         for item in payment_data:
-            # Clean and format the data
-            def clean_text(text):
-                if not text:
-                    return ''
-                # Replace HTML line breaks with newlines and clean up
-                return str(text).replace('<br>', '\n').replace('<br/>', '\n').strip()
-            
-            # Get and clean each field
-            instructor = clean_text(item.get('instructor', ''))
-            total_hours = clean_text(item.get('total_hours', ''))
-            by_client = clean_text(item.get('by_client', ''))
-            client = clean_text(item.get('client', ''))
-            hourly_rate = clean_text(item.get('hourly_rate', ''))
-            summary = clean_text(item.get('summary', ''))
+            # Get values directly - they already have proper newline formatting from get_payment_data
+            summary = str(item.get('summary', '')).strip()
+            hourly_rate = str(item.get('hourly_rate', '')).strip()
+            client = str(item.get('client', '')).strip()  # Already has newlines
+            by_client = str(item.get('by_client', '')).strip()  # Already has newlines
+            total_hours = str(item.get('total_hours', '')).strip()
+            instructor = str(item.get('instructor', '')).strip()
             
             # Create the row with proper ordering
             row = [
@@ -1777,19 +1772,9 @@ def export_payments_to_sheets():
         
         # Update the worksheet with new data
         if rows:
-            # Update cells in batch to handle newlines properly
-            cell_list = []
-            for i, row in enumerate(rows, start=2):  # Start from row 2 (after header)
-                for j, value in enumerate(row, start=1):  # Columns A-F (1-6)
-                    cell = gspread.Cell(
-                        row=i,
-                        col=j,
-                        value=value
-                    )
-                    cell_list.append(cell)
-            
-            # Update all cells at once
-            worksheet.update_cells(cell_list, value_input_option='USER_ENTERED')
+            # We already cleared the worksheet, so we just need to append the data
+            # Append rows with USER_ENTERED option to properly interpret newlines
+            worksheet.append_rows(rows, value_input_option='USER_ENTERED')
         
         # Apply formatting to data rows
         if rows:
@@ -1826,7 +1811,9 @@ def export_payments_to_sheets():
             # לקוח (C) and לפי לקוח (D) - Purple
             worksheet.format(f'C2:D{len(rows) + 1}', {
                 'textFormat': {'foregroundColor': {'red': 1, 'green': 0, 'blue': 1}},
-                'horizontalAlignment': 'RIGHT'  # Right align for RTL text
+                'horizontalAlignment': 'CENTER',  # Center align text
+                'wrapStrategy': 'WRAP',  # Ensure text wrapping
+                'verticalAlignment': 'MIDDLE'  # Center vertically
             })
             
             # סהכ שעות (E) and מדריך (F) - Bold green

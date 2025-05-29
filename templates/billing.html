@@ -1199,9 +1199,9 @@ document.addEventListener('DOMContentLoaded', async function() {
                         'סהכ שעות': parseFloat(cells[2]?.textContent?.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0,
                         'מדריך': cells[3]?.textContent?.trim() || '',
                         'לפי מדריך': cells[4]?.textContent?.trim() || '',
-                        'תמחור שעה': parseFloat(cells[5]?.textContent?.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0,
+                        'תמחור שעה': cells[5]?.textContent?.trim() || '',
                         'הנחה %': parseFloat(cells[6]?.textContent?.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0,
-                        'סיכום': parseFloat(cells[7]?.textContent?.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0
+                        'סיכום': cells[7]?.textContent?.trim() || ''
                     };
                     
                     // Log the extracted data for this row
