@@ -49,15 +49,69 @@ def update_instructor(sheet_name, row, updates):
         sheet_name: Name of the worksheet
         row: Row number (1-indexed)
         updates: Dictionary mapping column indices (1-indexed) to values
+        
+    Raises:
+        Exception: If there's an error updating the worksheet
     """
-    gc = get_gspread_client()
-    worksheet = gc.open_by_key(SPREADSHEET_ID).worksheet(sheet_name)
-
-    # Prepare the data in the correct format for batch update
-    values = [updates.get(col, '') for col in sorted(updates.keys())]
-
-    # Update the row with the new values
-    worksheet.update(f"A{row}:F{row}", [values])
+    print(f"\n=== update_instructor: Starting update for sheet '{sheet_name}', row {row} ===")
+    print(f"Updates to process: {updates}")
+    
+    try:
+        print("Authenticating with Google Sheets API...")
+        gc = get_gspread_client()
+        print("Successfully authenticated")
+        
+        print(f"Opening spreadsheet with ID: {SPREADSHEET_ID}")
+        spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+        print("Successfully opened spreadsheet")
+        
+        print(f"Getting worksheet: {sheet_name}")
+        worksheet = spreadsheet.worksheet(sheet_name)
+        print(f"Successfully accessed worksheet: {worksheet.title}")
+        
+        # Convert row to integer in case it's passed as string
+        row = int(row)
+        print(f"Processing row: {row}")
+        
+        # Prepare the data in the correct format for batch update
+        # Create a list with empty strings for all columns up to the max column in updates
+        max_col = max(updates.keys()) if updates else 0
+        values = [''] * max_col
+        print(f"Created values list with {len(values)} columns")
+        
+        # Fill in the values from the updates dictionary
+        print("Processing updates:")
+        for col, value in updates.items():
+            if 1 <= col <= len(values):
+                values[col-1] = value if value is not None else ''
+                print(f"  - Column {col}: '{values[col-1]}'")
+        
+        # Determine the range to update (e.g., 'A2:F2')
+        start_col = 'A'
+        end_col = chr(ord('A') + len(values) - 1) if values else 'A'
+        range_name = f"{start_col}{row}:{end_col}{row}"
+        print(f"Updating range: {range_name}")
+        
+        # Verify the data before updating
+        print(f"Data to update: {[values]}")
+        
+        # Update the row with the new values
+        print("Sending update to Google Sheets...")
+        worksheet.update(range_name, [values])
+        print("Successfully updated worksheet")
+        
+    except Exception as e:
+        error_msg = f"Error updating row {row} in sheet {sheet_name}: {str(e)}"
+        print("\n" + "="*50)
+        print("ERROR IN update_instructor:")
+        print(error_msg)
+        print("\nStack trace:")
+        import traceback
+        traceback.print_exc()
+        print("="*50 + "\n")
+        
+        # Re-raise the exception with more context
+        raise Exception(f"Failed to update Google Sheet: {error_msg}") from e
 
 def add_instructor(sheet_name, instructor_data):
     gc = get_gspread_client()

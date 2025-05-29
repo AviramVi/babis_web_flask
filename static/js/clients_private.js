@@ -1,10 +1,14 @@
+// Global variable to store clients data
+let clientsData = [];
+
 document.addEventListener('DOMContentLoaded', function() {
     // Get clients data from hidden element
-    let clientsData = [];
     try {
         const clientsDataElement = document.getElementById('clientsData');
-        if (clientsDataElement) {
-            clientsData = JSON.parse(clientsDataElement.textContent);
+        if (clientsDataElement && clientsDataElement.textContent) {
+            const parsedData = JSON.parse(clientsDataElement.textContent);
+            // Ensure clientsData is an array
+            clientsData = Array.isArray(parsedData) ? parsedData : [];
         }
     } catch (e) {
         console.error('Error parsing clients data:', e);
@@ -253,7 +257,7 @@ async function handleFormSubmit(e) {
         שם: document.getElementById('clientName').value,
         טלפון: document.getElementById('clientPhone').value,
         מייל: document.getElementById('clientEmail').value,
-        התמחויות: document.getElementById('clientSpecialNeed').value,
+        'צורך מיוחד': document.getElementById('clientSpecialNeed').value,
         הערות: document.getElementById('clientNotes').value,
         'פעיל': document.getElementById('clientActive').checked ? '' : 'לא פעיל'
     };
@@ -286,7 +290,7 @@ async function handleFormSubmit(e) {
                     <td class="clickable-cell">${updatedData.שם}</td>
                     <td><a href="tel:${updatedData.טלפון}" class="phone-link">${updatedData.טלפון}</a></td>
                     <td><a href="mailto:${updatedData.מייל}" class="email-link">${updatedData.מייל}</a></td>
-                    <td class="clickable-cell">${updatedData.התמחויות}</td>
+                    <td class="clickable-cell">${updatedData['צורך מיוחד']}</td>
                     <td class="clickable-cell">${updatedData.הערות}</td>
                 `;
                 
@@ -307,6 +311,11 @@ async function handleFormSubmit(e) {
                 alert('שגיאה בהוספת לקוח: ' + (result.error || 'אנא נסו שנית'));
             }
         } else {
+            console.log('Sending update request with data:', {
+                sheet_row: parseInt(sheetRow),
+                data: updatedData
+            });
+            
             const response = await fetch('/update_private_client', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -316,32 +325,57 @@ async function handleFormSubmit(e) {
                 })
             });
             
-            const result = await response.json();
+            console.log('Received response status:', response.status);
+            const result = await response.json().catch(e => {
+                console.error('Failed to parse JSON response:', e);
+                throw new Error('Invalid response from server');
+            });
             
-            if (result.success) {
-                const row = document.querySelector(`tr[data-client-id="${clientId}"]`);
+            console.log('Server response:', result);
+            
+            if (result && result.success) {
+                const row = document.querySelector(`tr[data-sheet-row="${sheetRow}"]`);
                 if (row) {
                     // Update row content
                     row.cells[1].textContent = updatedData.שם;
-                    row.cells[2].querySelector('a').textContent = updatedData.טלפון;
-                    row.cells[2].querySelector('a').href = `tel:${updatedData.טלפון}`;
-                    row.cells[3].querySelector('a').textContent = updatedData.מייל;
-                    row.cells[3].querySelector('a').href = `mailto:${updatedData.מייל}`;
-                    row.cells[4].textContent = updatedData.התמחויות;
-                    row.cells[5].textContent = updatedData.הערות;
+                    
+                    // Update phone cell
+                    const phoneCell = row.cells[2];
+                    if (phoneCell) {
+                        phoneCell.innerHTML = updatedData.טלפון ? 
+                            `<a href="tel:${updatedData.טלפון}" class="phone-link">${updatedData.טלפון}</a>` : 
+                            '';
+                    }
+                    
+                    // Update email cell
+                    const emailCell = row.cells[3];
+                    if (emailCell) {
+                        emailCell.innerHTML = updatedData.מייל ? 
+                            `<a href="mailto:${updatedData.מייל}" class="email-link">${updatedData.מייל}</a>` : 
+                            '';
+                    }
+                    
+                    // Update other cells
+                    if (row.cells[4]) row.cells[4].textContent = updatedData['צורך מיוחד'] || '';
+                    if (row.cells[5]) row.cells[5].textContent = updatedData.הערות || '';
 
                     // Update row styling based on active status
                     if (updatedData['פעיל'] === 'לא פעיל') {
                         row.style.textDecoration = 'line-through';
                         row.style.color = '#888';
+                        row.classList.add('inactive-client');
                     } else {
                         row.style.textDecoration = 'none';
                         row.style.color = '';
+                        row.classList.remove('inactive-client');
                     }
                 }
                 
                 // Update the data in memory
-                clientsData[clientId] = updatedData;
+                const clientIndex = clientsData.findIndex(client => client && client.sheet_row == sheetRow);
+                if (clientIndex !== -1) {
+                    clientsData[clientIndex] = { ...clientsData[clientIndex], ...updatedData };
+                }
                 showNotification('הלקוח עודכן בהצלחה');
             } else {
                 console.error('Error updating client:', result.error);

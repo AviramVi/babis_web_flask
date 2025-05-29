@@ -166,38 +166,76 @@ def add_private_client_route():
 
 @app.route('/update_private_client', methods=['POST'])
 def update_private_client_route():
-    data = request.json
-    sheet_row = data.get('sheet_row')
-    client_data = data.get('data')
-    sheet_name = os.getenv("clients_private_SHEET_NAME")
-    
+    print("\n=== Starting update_private_client_route ===")
     try:
-        # Get headers from first row
+        # Log incoming request data
+        print("Raw request data:", request.data)
+        data = request.get_json()
+        print("Parsed JSON data:", data)
+        
+        if not data:
+            error_msg = 'No data provided in request'
+            print(f"Error: {error_msg}")
+            return jsonify({'success': False, 'error': error_msg}), 400
+            
+        sheet_row = data.get('sheet_row')
+        client_data = data.get('data', {})
+        print(f"Sheet row: {sheet_row}")
+        print("Client data:", client_data)
+        
+        if not sheet_row:
+            error_msg = 'Missing sheet_row in request data'
+            print(f"Error: {error_msg}")
+            return jsonify({'success': False, 'error': error_msg}), 400
+            
+        sheet_name = os.getenv("clients_private_SHEET_NAME")
+        print(f"Using sheet name: {sheet_name}")
+        
+        if not sheet_name:
+            error_msg = 'Sheet name not configured in environment variables'
+            print(f"Error: {error_msg}")
+            return jsonify({'success': False, 'error': error_msg}), 500
+        
+        # Define the expected columns in order
         headers = ['שם', 'טלפון', 'מייל', 'צורך מיוחד', 'הערות', 'פעיל']
+        print("Headers:", headers)
         
-        # Create ordered list of values based on header order
-        values = [
-            client_data.get('שם', ''),
-            client_data.get('טלפון', ''),
-            client_data.get('מייל', ''),
-            client_data.get('צורך מיוחד', ''),
-            client_data.get('הערות', ''),
-            client_data.get('פעיל', '')
-        ]
-
-        # Create cell updates
+        # Create updates dictionary with column indices (1-based) and values
         updates = {}
-        for idx, value in enumerate(values, start=1):
+        for idx, header in enumerate(headers, start=1):
+            # Use get with default empty string to handle missing keys
+            value = client_data.get(header, '')
             updates[idx] = value
+            print(f"Column {idx} ({header}): {value}")
         
-        # Send a single batch update to the sheet
-        if updates:
-            update_instructor(sheet_name, sheet_row, updates)  # Reusing the same function as it has the same logic
+        print("Updates to be made:", updates)
         
-        return jsonify({'success': True})
+        # Update the row in the sheet
+        from utils.google_sheets import update_instructor
+        print("Calling update_instructor...")
+        update_instructor(sheet_name, sheet_row, updates)
+        print("Successfully updated instructor data")
+        
+        response = {'success': True}
+        print("Returning success response:", response)
+        return jsonify(response)
+        
     except Exception as e:
-        print(f"Error updating private client: {e}")
-        return jsonify({'success': False, 'error': str(e)})
+        import traceback
+        error_details = traceback.format_exc()
+        error_msg = f"Error updating private client: {str(e)}"
+        print("\n" + "="*50)
+        print("ERROR DETAILS:")
+        print(error_msg)
+        print("\nStack trace:")
+        print(error_details)
+        print("="*50 + "\n")
+        
+        return jsonify({
+            'success': False, 
+            'error': 'An error occurred while updating the client. Please try again.',
+            'details': str(e)
+        }), 500
 
 @app.route('/clients/institutional')
 def clients_institutional():

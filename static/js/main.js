@@ -24,30 +24,36 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Function to handle adding a new instructor
-    document.getElementById('add-instructor-btn').addEventListener('click', function() {
-        const newInstructor = {
-            name: document.getElementById('new-instructor-name').value,
-            phone: document.getElementById('new-instructor-phone').value,
-            email: document.getElementById('new-instructor-email').value,
-            expertise: document.getElementById('new-instructor-expertise').value,
-            notes: document.getElementById('new-instructor-notes').value,
-        };
+    const addInstructorBtn = document.getElementById('add-instructor-btn');
+    if (addInstructorBtn) {
+        addInstructorBtn.addEventListener('click', function() {
+            const newInstructor = {
+                name: document.getElementById('new-instructor-name')?.value || '',
+                phone: document.getElementById('new-instructor-phone')?.value || '',
+                email: document.getElementById('new-instructor-email')?.value || '',
+                expertise: document.getElementById('new-instructor-expertise')?.value || '',
+                notes: document.getElementById('new-instructor-notes')?.value || '',
+            };
 
-        fetch('/api/instructors', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(newInstructor),
-        })
-        .then(response => response.json())
-        .then(data => {
-            console.log('Instructor added:', data);
-            fetchInstructors(); // Refresh the instructor list
-        })
-        .catch(error => console.error('Error adding instructor:', error));
-    });
+            fetch('/api/instructors', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(newInstructor),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Instructor added:', data);
+                fetchInstructors(); // Refresh the instructor list
+            })
+            .catch(error => console.error('Error adding instructor:', error));
+        });
+    }
 
-    // Initial fetch of instructors
-    fetchInstructors();
+    // Initial fetch of instructors - only if we're on a page with the instructors table
+    const instructorsTable = document.getElementById('instructors-table-body');
+    if (instructorsTable) {
+        fetchInstructors();
+    }
 });
