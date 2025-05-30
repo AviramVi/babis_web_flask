@@ -1,26 +1,77 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body>
-    <div class="container">
-        <main>
-            <div class="dashboard-bg">
-                <div class="dashboard-grid">
-                    <a href="{{ url_for('instructors') }}" class="dashboard-card">מדריכים</a>
-                    <a href="{{ url_for('clients_private') }}" class="dashboard-card">לקוחות פרטיים</a>
-                    <a href="{{ url_for('clients_institutional') }}" class="dashboard-card">לקוחות מוסדיים</a>
-                    <a href="{{ url_for('calendar_page') }}" class="dashboard-card">לוח שנה</a>
-                    <a href="{{ url_for('billing') }}" class="dashboard-card">חיובים</a>
-                    <a href="{{ url_for('payments') }}" class="dashboard-card">תשלומים</a>
-                </div>
-            </div>
-        </main>
+{% extends "base.html" %}
+
+{% block title %}דשבורד{% endblock %}
+
+{% block content %}
+<div class="dashboard-bg">
+    <h1 class="dashboard-title text-center mb-4">ברוכים הבאים למערכת הבאביס</h1>
+    
+    <div class="dashboard-grid">
+        <a href="{{ url_for('instructors') }}" class="dashboard-card">
+            <i class="fas fa-chalkboard-teacher fa-2x mb-2"></i>
+            <div>מדריכים</div>
+        </a>
+        
+        <a href="{{ url_for('clients_private') }}" class="dashboard-card">
+            <i class="fas fa-user-friends fa-2x mb-2"></i>
+            <div>לקוחות פרטיים</div>
+        </a>
+        
+        <a href="{{ url_for('clients_institutional') }}" class="dashboard-card">
+            <i class="fas fa-building fa-2x mb-2"></i>
+            <div>לקוחות מוסדיים</div>
+        </a>
+        
+        <a href="{{ url_for('calendar_page') }}" class="dashboard-card">
+            <i class="far fa-calendar-alt fa-2x mb-2"></i>
+            <div>לוח שנה</div>
+        </a>
+        
+        <a href="{{ url_for('billing') }}" class="dashboard-card">
+            <i class="fas fa-file-invoice-dollar fa-2x mb-2"></i>
+            <div>חיובים</div>
+        </a>
+        
+        <a href="{{ url_for('payments') }}" class="dashboard-card">
+            <i class="fas fa-money-bill-wave fa-2x mb-2"></i>
+            <div>תשלומים</div>
+        </a>
     </div>
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
-</body>
-</html>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Add touch feedback for cards
+document.addEventListener('DOMContentLoaded', function() {
+    const cards = document.querySelectorAll('.dashboard-card');
+    
+    cards.forEach(card => {
+        // Add touch feedback
+        card.addEventListener('touchstart', function() {
+            this.classList.add('active');
+        });
+        
+        card.addEventListener('touchend', function() {
+            this.classList.remove('active');
+        });
+        
+        // Prevent long press menu on mobile
+        card.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            return false;
+        });
+    });
+    
+    // Handle iOS viewport height issue
+    function updateViewportHeight() {
+        let vh = window.innerHeight * 0.01;
+        document.documentElement.style.setProperty('--vh', `${vh}px`);
+    }
+    
+    updateViewportHeight();
+    window.addEventListener('resize', updateViewportHeight);
+    window.addEventListener('orientationchange', updateViewportHeight);
+});
+</script>
+{% endblock %}
