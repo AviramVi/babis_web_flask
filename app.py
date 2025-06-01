@@ -1052,9 +1052,16 @@ def calendar_page():
         "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"
     ]
 
-    # Days in month
-    days_in_month = pycalendar.monthrange(year, month)[1]
-
+    # Days in month and first day of the week (0 = Monday, 6 = Sunday)
+    first_day_of_week, days_in_month = pycalendar.monthrange(year, month)
+    
+    # Convert to Sunday = 0, Saturday = 6 format by adding 1 and taking modulo 7
+    # This aligns with hebrew_days array which starts with Sunday
+    first_day_sunday_based = (first_day_of_week + 1) % 7
+    
+    # Generate calendar offset days for proper alignment
+    offset_days = first_day_sunday_based
+    
     # Hebrew months list with 1-based indexing (index 0 is empty)
     hebrew_months_list = [
         "", "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
@@ -1068,6 +1075,7 @@ def calendar_page():
         month_name=hebrew_months[month],
         hebrew_days=hebrew_days,
         days_in_month=days_in_month,
+        offset_days=offset_days,
         hebrew_months=hebrew_months_list,
         events_by_day=events_by_day,
         today=date.today()
