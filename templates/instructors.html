@@ -377,9 +377,13 @@
             console.log('Instructor data:', JSON.stringify(instructor, null, 2));
             console.log('All instructor data keys:', Object.keys(instructor));
             
+            // Make sure we have the sheet_row, try multiple possible keys
+            const sheetRow = instructor['sheet_row'] || instructor['sheetRow'] || '';
+            console.log('Setting sheetRow to:', sheetRow);
+            
             document.getElementById('instructorIndex').value = instructorId;
             document.getElementById('rowIndex').value = rowIndex;
-            document.getElementById('sheetRow').value = instructor['sheet_row'];
+            document.getElementById('sheetRow').value = sheetRow;
             document.getElementById('instructorName').value = instructor['שם'] || '';
             document.getElementById('instructorPhone').value = instructor['טלפון'] || '';
             document.getElementById('instructorEmail').value = instructor['מייל'] || '';
@@ -431,7 +435,7 @@
                 'פעיל': document.getElementById('instructorActive').checked ? '' : 'לא פעיל'
             };
             if (isAdd) {
-                fetch('/add_instructor', {
+                fetch(window.location.origin + '/add_instructor', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ data: updatedData })
@@ -483,51 +487,92 @@
                 return;
             }
             
-            fetch('/update_instructor', {
+            // Ensure sheetRow is a valid number
+            const sheetRowNum = parseInt(sheetRow);
+            if (isNaN(sheetRowNum)) {
+                console.error('Invalid sheetRow value:', sheetRow);
+                alert('שגיאה: לא ניתן לעדכן את המדריך. אנא רענן את הדף ונסה שוב.');
+                return;
+            }
+            
+            console.log('Submitting update for instructor:', {
+                instructorId,
+                sheetRow: sheetRowNum,
+                updatedData
+            });
+            
+            fetch(window.location.origin + '/update_instructor', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    sheet_row: parseInt(sheetRow),
+                    sheet_row: sheetRowNum,
                     data: updatedData
                 })
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
+                    console.log('Update successful, updating UI for instructor ID:', instructorId);
                     const row = document.querySelector(`tr[data-instructor-id="${instructorId}"]`);
                     if (row) {
-                        // Update row content
-                        row.cells[1].textContent = updatedData.שם;
-                        row.cells[2].querySelector('a').textContent = updatedData.טלפון;
-                        row.cells[2].querySelector('a').href = `tel:${updatedData.טלפון}`;
-                        row.cells[3].querySelector('a').textContent = updatedData.מייל;
-                        row.cells[3].querySelector('a').href = `mailto:${updatedData.מייל}`;
-                        row.cells[4].textContent = updatedData.התמחויות;
-                        row.cells[5].textContent = updatedData.הערות;
-
-                        // Update row styling based on active status
-                        if (updatedData['פעיל'] === 'לא פעיל') {
-                            row.style.textDecoration = 'line-through';
-                            row.style.color = '#888';
-                        } else {
-                            row.style.textDecoration = 'none';
-                            row.style.color = '';
+                        console.log('Found existing row to update:', row);
+                        // Update row content with new data
+                        const nameCell = row.cells[1];
+                        const phoneCell = row.cells[2];
+                        const emailCell = row.cells[3];
+                        const specializationCell = row.cells[4];
+                        const notesCell = row.cells[5];
+                        
+                        // Update cell content
+                        nameCell.textContent = updatedData.שם || '';
+                        phoneCell.innerHTML = updatedData.טלפון ? 
+                            `<a href="tel:${updatedData.טלפון}" class="phone-link">${updatedData.טלפון}</a>` : '';
+                        emailCell.innerHTML = updatedData.מייל ? 
+                            `<a href="mailto:${updatedData.מייל}" class="email-link">${updatedData.מייל}</a>` : '';
+                        specializationCell.textContent = updatedData.התמחויות || '';
+                        notesCell.textContent = updatedData.הערות || '';
+                        
+                        // Update active status styling
+                        const isInactive = updatedData['פעיל'] === 'לא פעיל';
+                        row.style.textDecoration = isInactive ? 'line-through' : '';
+                        row.style.color = isInactive ? '#888' : '';
+                        
+                        // Update the instructorsData array with the new data
+                        if (instructorsData[instructorId]) {
+                            instructorsData[instructorId] = {
+                                ...instructorsData[instructorId],
+                                ...updatedData,
+                                sheet_row: sheetRowNum
+                            };
+                            console.log('Updated instructorsData for ID:', instructorId, instructorsData[instructorId]);
                         }
+                        
+                        // Close the modal and show success message
+                        closeModal();
+                        showNotification('המדריך עודכן בהצלחה');
+                        
+                        // Re-sort the table to maintain order
+                        if (typeof sortTable === 'function') {
+                            sortTable(0, 'asc'); // Sort by first column in ascending order
+                        }
+                    } else {
+                        console.error('Row not found for instructor ID:', instructorId);
+                        // If row not found, refresh the page to sync with server
+                        showNotification('מעדכן את רשימת המדריכים...');
+                        setTimeout(() => window.location.reload(), 1000);
                     }
-                    
-                    // Update the data in memory
-                    instructorsData[instructorId] = updatedData;
-                    closeModal();
-                    showNotification('המדריך עודכן בהצלחה');
                 } else {
-                    alert('שגיאה בעדכון המדריך. אנא נסו שנית.');
+                    const errorMsg = data.error || 'שגיאה לא ידועה';
+                    console.error('Server error:', errorMsg);
+                    alert(`שגיאה בעדכון המדריך: ${errorMsg}`);
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('שגיאה בעדכון המדריך. אנא נסו שנית.');
+                const errorMessage = error.message || 'שגיאה לא ידועה';
+                alert(`שגיאה בעדכון המדריך: ${errorMessage}`);
             });
         });
     });

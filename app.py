@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify, session, g
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, g, send_from_directory
 import os
 import gspread
 from dotenv import load_dotenv
@@ -67,13 +67,34 @@ def instructors():
 
 @app.route('/update_instructor', methods=['POST'])
 def update_instructor_route():
-    data = request.json
-    sheet_row = data.get('sheet_row')  # This is the persistent row index in the Google Sheet
-    instructor_data = data.get('data')  # This is the updated instructor data
-    
-    sheet_name = os.getenv("INSTRUCTORS_SHEET_NAME")
-    
     try:
+        data = request.json
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+            
+        sheet_row = data.get('sheet_row')
+        instructor_data = data.get('data')
+        
+        # Debug logging
+        print(f"Update request data: {data}")
+        print(f"Sheet row: {sheet_row}, type: {type(sheet_row)}")
+        
+        if sheet_row is None:
+            return jsonify({'success': False, 'error': 'Missing sheet_row parameter'}), 400
+            
+        try:
+            sheet_row = int(sheet_row)
+        except (ValueError, TypeError) as e:
+            print(f"Error converting sheet_row to int: {e}")
+            return jsonify({'success': False, 'error': f'Invalid sheet_row: {sheet_row}. Must be a number.'}), 400
+        
+        if not instructor_data:
+            return jsonify({'success': False, 'error': 'No instructor data provided'}), 400
+        
+        sheet_name = os.getenv("INSTRUCTORS_SHEET_NAME")
+        if not sheet_name:
+            return jsonify({'success': False, 'error': 'INSTRUCTORS_SHEET_NAME not configured'}), 500
+        
         # Get headers from first row
         headers = ['שם', 'טלפון', 'מייל', 'התמחויות', 'הערות', 'פעיל']
         
@@ -94,12 +115,13 @@ def update_instructor_route():
         
         # Send a single batch update to the sheet
         if updates:
+            print(f"Updating row {sheet_row} with values: {updates}")
             update_instructor(sheet_name, sheet_row, updates)
         
         return jsonify({'success': True})
     except Exception as e:
         print(f"Error updating instructor: {e}")
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/add_instructor', methods=['POST'])
 def add_instructor_route():
@@ -1016,10 +1038,17 @@ def calendar_page():
         # Store both the display title and full event data
         # Ensure all values are JSON serializable
         
-        # Get creator's email if available
+        # Get creator's/organizer's email if available
         creator_email = ''
         creator_name = 'לא צוין'
-        if 'creator' in event and 'email' in event['creator']:
+        
+        # First try to get from organizer (this works for Microsoft accounts)
+        if 'organizer' in event and 'email' in event['organizer']:
+            creator_email = event['organizer']['email']
+            # Get instructor name from email if available
+            creator_name = email_to_name.get(creator_email.lower(), creator_email)
+        # If no organizer or couldn't map to a name, try creator (this works for Gmail)
+        elif 'creator' in event and 'email' in event['creator']:
             creator_email = event['creator']['email']
             # Get instructor name from email if available
             creator_name = email_to_name.get(creator_email.lower(), creator_email)
@@ -2163,6 +2192,11 @@ def update_hourly_rate():
             'success': False,
             'error': str(e)
         }), 500
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(os.path.join(app.root_path, 'static'),
+                               'favicon.ico', mimetype='image/vnd.microsoft.icon')
 
 if __name__ == '__main__':
     app.run(debug=True)
