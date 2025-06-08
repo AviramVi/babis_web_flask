@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session, g, send_from_directory
 import os
+import time
 import gspread
 from dotenv import load_dotenv
 from utils.google_sheets import (
@@ -31,7 +32,7 @@ from google.oauth2.credentials import Credentials as OAuthCredentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 import pickle
-from time import time
+from time import time as current_time
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # Required for session
@@ -42,9 +43,12 @@ def inject_now():
     """Make 'now' available to all templates."""
     return {'now': datetime.now()}
 
-# Simple in-memory cache for billing API
+# Cache TTL constants
+CONFIG_DATA_CACHE_TTL = 300  # 5 minutes for configuration data
+FREQUENT_DATA_CACHE_TTL = 60  # 1 minute for frequently changing data
+
+# Simple in-memory caches
 billing_cache = {}  # (month, year): (timestamp, data)
-CACHE_TTL = 60  # seconds
 _client_events_cache = {} # (client_name, month, year): (timestamp, data)
 _instructor_events_cache = {} # (instructor_name, month, year): (timestamp, data)
 
@@ -775,11 +779,11 @@ def get_billing_data():
     month = int(request.args.get('month', datetime.now().month))
     year = int(request.args.get('year', datetime.now().year))
     cache_key = (month, year)
-    now = time()
+    now = current_time()
     # Serve from cache if fresh
     if cache_key in billing_cache:
         ts, data = billing_cache[cache_key]
-        if now - ts < CACHE_TTL:
+        if now - ts < FREQUENT_DATA_CACHE_TTL:
             print("Serving billing data from cache")
             return jsonify(data)
     print("DEBUG: /api/billing endpoint called")
@@ -1783,7 +1787,7 @@ def get_client_events():
 
     if cache_key in _client_events_cache:
         ts, data = _client_events_cache[cache_key]
-        if now_ts - ts < CACHE_TTL: # Using the same 60s TTL as billing_cache
+        if now_ts - ts < FREQUENT_DATA_CACHE_TTL: # Using the same 60s TTL as billing_cache
             print(f"DEBUG: Serving client_events for {client_name} {month}/{year} from cache")
             return jsonify(data) # Assuming data is already in jsonifyable format
 
@@ -1869,7 +1873,7 @@ def get_instructor_events():
 
     if cache_key in _instructor_events_cache:
         ts, data = _instructor_events_cache[cache_key]
-        if now_ts - ts < CACHE_TTL: # Using 60s TTL
+        if now_ts - ts < FREQUENT_DATA_CACHE_TTL: # Using 60s TTL
             print(f"DEBUG: Serving instructor_events for {instructor_name} {month}/{year} from cache")
             return jsonify(data)
 
