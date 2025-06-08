@@ -17,8 +17,12 @@ from utils.google_sheets import (
     get_gspread_client
 )
 from googleapiclient.discovery import build
+_calendar_service_cache = None
+_client_names_cache = (None, 0)  # (data, timestamp)
+_instructors_map_cache = (None, 0)  # (data, timestamp)
+_rates_discounts_cache = {} # Cache per (month, year) key: (data, timestamp)
+CACHE_TTL_SECONDS = 300  # 5 minutes
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
 import calendar as pycalendar
 import pytz
 from datetime import datetime, timedelta, date
@@ -41,6 +45,8 @@ def inject_now():
 # Simple in-memory cache for billing API
 billing_cache = {}  # (month, year): (timestamp, data)
 CACHE_TTL = 60  # seconds
+_client_events_cache = {} # (client_name, month, year): (timestamp, data)
+_instructor_events_cache = {} # (instructor_name, month, year): (timestamp, data)
 
 @app.route('/')
 def dashboard():
@@ -406,6 +412,51 @@ def payments():
         total_payment=payment_data.get('total_payment', 0)
     )
 
+def _fetch_all_hourly_wages_map(month, year):
+    """Helper function to fetch all hourly wages for a given month and year and structure them into a map."""
+    # This function is similar to get_hourly_wage but fetches all data at once.
+    # Ensure get_gspread_client, os, gspread are available (likely imported at top level or passed as args)
+    # For simplicity, assuming top-level imports and os.getenv works here.
+    wages_map = {}
+    DEFAULT_HOURLY_WAGE = 200
+    try:
+        gc = get_gspread_client()
+        spreadsheet_id = os.getenv('payment_SPREADSHEET_ID')
+        if not spreadsheet_id:
+            print("DEBUG: payment_SPREADSHEET_ID not found, cannot fetch wages.")
+            return {}
+
+        spreadsheet = gc.open_by_key(spreadsheet_id)
+        worksheet = spreadsheet.worksheet('שכר שעה') # This must match the sheet name
+        records = worksheet.get_all_records()
+
+        # Process records into a map: (instructor, month, year) -> wage
+        # Iterate normally as we want the latest entry if duplicates exist for the same key (though ideally keys are unique)
+        for record in records:
+            try:
+                instructor_name = str(record.get('מדריך', '')).strip()
+                record_month = int(record.get('חודש', 0))
+                record_year = int(record.get('שנה', 0))
+                wage = float(record.get('שכר שעה', DEFAULT_HOURLY_WAGE))
+                if instructor_name and record_month == month and record_year == year:
+                    # If multiple entries for the same instructor/month/year, the last one in the sheet will overwrite previous ones.
+                    # If sheet is appended to, this means the latest entry is used.
+                    # If specific logic for multiple entries is needed (e.g., take first, average), adjust here.
+                    wages_map[(instructor_name, record_month, record_year)] = wage
+            except (ValueError, TypeError) as ve:
+                print(f"DEBUG: Skipping record due to parsing error: {record} - {ve}")
+                continue
+        print(f"DEBUG: Fetched hourly wages map for {month}/{year} with {len(wages_map)} entries.")
+        return wages_map
+    except gspread.WorksheetNotFound:
+        print(f"DEBUG: 'שכר שעה' worksheet not found for {month}/{year}. No wages loaded.")
+        return {}
+    except Exception as e:
+        print(f"Error fetching all hourly wages: {e}")
+        import traceback
+        traceback.print_exc()
+        return {} # Return empty map on error
+
 def get_payment_data(month, year):
     """Fetch and process payment data for a specific month and year."""
     try:
@@ -450,6 +501,10 @@ def get_payment_data(month, year):
         instructor_data = {}
         instructors_map = create_instructors_map()
         valid_instructors = set(instructors_map.values())  # Get set of valid instructor names
+
+        # Pre-fetch all hourly wages for the given month and year
+        all_hourly_wages_map = _fetch_all_hourly_wages_map(month, year)
+        DEFAULT_HOURLY_WAGE_FOR_PAYMENT = 200 # Ensure this default is consistent
         
         for event in filtered_events:
             # Skip events without an organizer
@@ -484,12 +539,12 @@ def get_payment_data(month, year):
             
             # Initialize instructor data if not exists
             if instructor_name not in instructor_data:
-                # Try to get the saved hourly wage, or use default (200)
-                saved_hourly_wage = get_hourly_wage(instructor_name, month, year) or 200
+                # Use pre-fetched hourly wage, or default if not found in map
+                hourly_wage = all_hourly_wages_map.get((instructor_name, month, year), DEFAULT_HOURLY_WAGE_FOR_PAYMENT)
                 instructor_data[instructor_name] = {
                     'total_hours': 0,
                     'by_client': {},
-                    'hourly_rate': saved_hourly_wage,  # Use saved rate or default
+                    'hourly_rate': hourly_wage,
                     'total_payment': 0
                 }
             
@@ -590,48 +645,129 @@ def billing():
                          years=years)
 
 def get_client_names_from_sheets():
-    """Fetch client names from both private and institutional clients sheets."""
+    """Fetch client names from both private and institutional clients sheets, with caching."""
+    global _client_names_cache
     from utils.google_sheets import get_sheet_data
-    
+    import time
+
+    cached_data, last_fetched_time = _client_names_cache
+    if cached_data is not None and (time.time() - last_fetched_time) < CACHE_TTL_SECONDS:
+        print("DEBUG: Returning cached client names")
+        return cached_data
+
     try:
         # Get private clients
         private_clients_sheet = os.getenv("clients_private_SHEET_NAME", "לקוחות פרטיים")
         _, private_clients = get_sheet_data(private_clients_sheet)
-        private_client_names = {client.get('שם', '').strip() for client in private_clients if client.get('שם').strip()}
+        private_client_names = {client.get('שם', '').strip() for client in private_clients if client.get('שם', '').strip()}
         
         # Get institutional clients
         institutional_clients_sheet = os.getenv("clients_institutional_SHEET_NAME", "לקוחות מוסדיים")
         _, institutional_clients = get_sheet_data(institutional_clients_sheet)
-        institutional_client_names = {client.get('גוף', '').strip() for client in institutional_clients if client.get('גוף').strip()}
+        institutional_client_names = {client.get('גוף', '').strip() for client in institutional_clients if client.get('גוף', '').strip()}
         
         # Combine all client names
         all_client_names = private_client_names.union(institutional_client_names)
-        print(f"DEBUG: Found {len(all_client_names)} unique client names in sheets")
+        print(f"DEBUG: Fetched {len(all_client_names)} unique client names from sheets")
+        _client_names_cache = (all_client_names, time.time())
         return all_client_names
         
     except Exception as e:
         print(f"ERROR fetching client names: {str(e)}")
         import traceback
         traceback.print_exc()
-        return set()
+        # Return stale cache if available, otherwise empty set
+        return cached_data if cached_data is not None else set()
 
 def create_instructors_map():
-    """Create a mapping of email usernames to full instructor names"""
+    """Create a mapping of email usernames to full instructor names, with caching."""
+    global _instructors_map_cache
+    import time
+
+    cached_data, last_fetched_time = _instructors_map_cache
+    if cached_data is not None and (time.time() - last_fetched_time) < CACHE_TTL_SECONDS:
+        print("DEBUG: Returning cached instructors map")
+        return cached_data
+
     try:
         # Get the sheet name from environment variables or use a default
         sheet_name = os.getenv("INSTRUCTORS_SHEET_NAME", "מדריכים")
-        instructors = fetch_instructors(sheet_name)
+        instructors = fetch_instructors(sheet_name) # Assuming fetch_instructors is from utils.google_sheets
         email_to_name = {}
         for instructor in instructors:
             email = instructor.get('מייל', '').strip()
             if '@' in email:
                 username = email.split('@')[0]
                 email_to_name[username] = instructor.get('שם', username)
+        
+        print(f"DEBUG: Fetched and created instructors map with {len(email_to_name)} entries")
+        _instructors_map_cache = (email_to_name, time.time())
         return email_to_name
     except Exception as e:
         print(f"Error creating instructors map: {str(e)}")
         import traceback
         traceback.print_exc()
+        # Return stale cache if available, otherwise empty dict
+        return cached_data if cached_data is not None else {}
+
+def _fetch_rates_discounts_map(month, year):
+    """Helper function to fetch rates and discounts for a given month and year, with caching."""
+    global _rates_discounts_cache
+    import time
+
+    cache_key = (month, year)
+    if cache_key in _rates_discounts_cache:
+        cached_data, last_fetched_time = _rates_discounts_cache[cache_key]
+        if (time.time() - last_fetched_time) < CACHE_TTL_SECONDS:
+            print(f"DEBUG: Returning cached rates/discounts for {month}/{year}")
+            return cached_data
+
+    rates_discounts = {}
+    try:
+        gc = get_gspread_client() # Assumes get_gspread_client is available
+        spreadsheet_id = os.getenv('billing_SPREADSHEET_ID') # Assumes os is available
+        if not spreadsheet_id:
+            print("DEBUG: billing_SPREADSHEET_ID not found. Cannot fetch rates/discounts.")
+            return {}
+
+        spreadsheet = gc.open_by_key(spreadsheet_id)
+        worksheet = spreadsheet.worksheet('תעריפים והנחות') # Sheet name for rates/discounts
+        records = worksheet.get_all_records()
+        
+        for record in records:
+            try:
+                record_month_str = str(record.get('חודש', '')).strip()
+                record_year_str = str(record.get('שנה', '')).strip()
+                
+                if record_month_str == str(month) and record_year_str == str(year):
+                    client = str(record.get('לקוח', '')).strip()
+                    typ = str(record.get('סוג', '')).strip() # e.g., 'תמחור שעה', 'הנחה %'
+                    value_str = str(record.get('ערך', '0')).strip()
+                    value = float(value_str) if value_str else 0
+                    
+                    if client and typ:
+                        if client not in rates_discounts:
+                            rates_discounts[client] = {}
+                        rates_discounts[client][typ] = value
+            except (ValueError, TypeError) as ve:
+                print(f"DEBUG: Skipping rates/discounts record due to parsing error: {record} - {ve}")
+                continue
+        
+        print(f"DEBUG: Fetched rates/discounts for {month}/{year} with {len(rates_discounts)} client entries.")
+        _rates_discounts_cache[cache_key] = (rates_discounts, time.time())
+        return rates_discounts
+
+    except gspread.WorksheetNotFound:
+        print(f"DEBUG: 'תעריפים והנחות' worksheet not found for {month}/{year}. No rates/discounts loaded.")
+        _rates_discounts_cache[cache_key] = ({}, time.time()) # Cache empty result to prevent re-fetching on error for TTL period
+        return {}
+    except Exception as e:
+        print(f"Error fetching rates/discounts: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return stale cache if available, otherwise empty dict
+        if cache_key in _rates_discounts_cache:
+            return _rates_discounts_cache[cache_key][0]
         return {}
 
 @app.route('/api/billing')
@@ -670,24 +806,8 @@ def get_billing_data():
         events = fetch_events_from_calendar(start_date, end_date)
         print(f"DEBUG: Found {len(events)} events before filtering")
         
-        # Fetch rates and discounts for this month/year
-        rates_discounts = {}  # {client: {"תמחור שעה": value, "הנחה %": value}}
-        try:
-            gc = get_gspread_client()
-            spreadsheet_id = os.getenv('billing_SPREADSHEET_ID')
-            spreadsheet = gc.open_by_key(spreadsheet_id)
-            worksheet = spreadsheet.worksheet('תעריפים והנחות')
-            records = worksheet.get_all_records()
-            for record in records:
-                if str(record.get('חודש', '')).strip() == str(month) and str(record.get('שנה', '')).strip() == str(year):
-                    client = record['לקוח']
-                    typ = record['סוג']
-                    value = float(record['ערך']) if record['ערך'] else 0
-                    if client not in rates_discounts:
-                        rates_discounts[client] = {}
-                    rates_discounts[client][typ] = value
-        except Exception as e:
-            print(f"Error fetching rates/discounts: {e}")
+        # Fetch rates and discounts for this month/year using the cached helper
+        rates_discounts = _fetch_rates_discounts_map(month, year)
         
         # Process events to group by client and calculate hours
         client_data = {}
@@ -845,7 +965,12 @@ def parse_iso_datetime(dt_str):
 
 def get_calendar_service():
     """Get an authorized Google Calendar API service instance using service account."""
-    from google.oauth2 import service_account
+    global _calendar_service_cache
+    if _calendar_service_cache:
+        print("Returning cached Google Calendar service")
+        return _calendar_service_cache
+
+    # Imports 'Credentials' and 'build' are expected to be at the top of the file.
     
     SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
     SERVICE_ACCOUNT_FILE = os.getenv('SERVICE_ACCOUNT_FILE')
@@ -856,7 +981,7 @@ def get_calendar_service():
     
     try:
         # Create credentials using the service account file
-        creds = service_account.Credentials.from_service_account_file(
+        creds = Credentials.from_service_account_file(
             SERVICE_ACCOUNT_FILE, 
             scopes=SCOPES
         )
@@ -864,6 +989,7 @@ def get_calendar_service():
         # Create the service
         service = build('calendar', 'v3', credentials=creds)
         print("Successfully created Google Calendar service")
+        _calendar_service_cache = service  # Cache the service
         return service
         
     except Exception as e:
@@ -905,7 +1031,8 @@ def fetch_events_from_calendar(start_date, end_date):
             timeMax=time_max,
             singleEvents=True,
             orderBy='startTime',
-            maxResults=1000
+            maxResults=1000,
+            fields='items(summary,organizer(email),start(dateTime,date),end(dateTime,date),status),nextPageToken'  # Added fields parameter
         )
         
         print("\n📡 Sending API request...")
@@ -962,35 +1089,15 @@ def calendar_page():
     CALENDAR_ID = os.getenv('CALENDAR_ID')
     SCOPES = ['https://www.googleapis.com/auth/calendar']
 
-    # Get all clients for filtering (both private and institutional)
-    # Get private clients
-    private_clients_sheet = os.getenv("clients_private_SHEET_NAME")
-    _, private_clients = get_sheet_data(private_clients_sheet)
-    private_client_names = [client.get('שם', '').strip() for client in private_clients if client.get('שם')]
+    # Get all client names using the cached helper function
+    all_client_names = get_client_names_from_sheets()
     
-    # Get institutional clients
-    institutional_clients_sheet = os.getenv("clients_institutional_SHEET_NAME")
-    _, institutional_clients = get_sheet_data(institutional_clients_sheet)
-    institutional_client_names = [client.get('גוף', '').strip() for client in institutional_clients if client.get('גוף')]
+    # Get instructor email to name map using the cached helper function
+    email_to_name = create_instructors_map()
     
-    # Combine all client names
-    all_client_names = private_client_names + institutional_client_names
-    
-    # Get instructors data for name mapping
-    instructors_sheet = os.getenv("INSTRUCTORS_SHEET_NAME")
-    _, instructors = get_sheet_data(instructors_sheet)
-    
-    # Create a mapping of instructor emails to their names
-    email_to_name = {}
-    for instructor in instructors:
-        if 'מייל' in instructor and 'שם' in instructor:
-            email = instructor['מייל'].strip().lower()
-            name = instructor['שם'].strip()
-            if email and name:
-                email_to_name[email] = name
-    
-    credentials = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    service = build('calendar', 'v3', credentials=credentials)
+    # Note: SERVICE_ACCOUNT_FILE, CALENDAR_ID, SCOPES are defined earlier in the function
+    # The actual service object for calendar API calls will be obtained via get_calendar_service()
+    # which is used by fetch_events_from_calendar(). No need to build service here.
 
     # Get start/end of month
     start_date = datetime(year, month, 1, tzinfo=pytz.timezone('Asia/Jerusalem'))
@@ -999,18 +1106,13 @@ def calendar_page():
     else:
         end_date = datetime(year, month + 1, 1, tzinfo=pytz.timezone('Asia/Jerusalem'))
 
-    # Fetch events
-    events_result = service.events().list(
-        calendarId=CALENDAR_ID,
-        timeMin=start_date.isoformat(),
-        timeMax=end_date.isoformat(),
-        singleEvents=True,
-        orderBy='startTime'
-    ).execute()
+    # Fetch events using the optimized and potentially cached helper function
+    # fetch_events_from_calendar expects datetime objects with tzinfo
+    all_events = fetch_events_from_calendar(start_date, end_date)
 
     # Group events by day
     events_by_day = {}
-    for event in events_result.get('items', []):
+    for event in all_events:
         title = event.get('summary', '')
         
         # Find the client name in the title (if any)
@@ -1672,10 +1774,20 @@ def save_rate_discount():
 @app.route('/api/client_events')
 def get_client_events():
     """API endpoint to get events for a specific client"""
+    client_name = request.args.get('client_name')
+    month = int(request.args.get('month', datetime.now().month))
+    year = int(request.args.get('year', datetime.now().year))
+
+    cache_key = (client_name, month, year)
+    now_ts = time.time() # time needs to be imported if not already
+
+    if cache_key in _client_events_cache:
+        ts, data = _client_events_cache[cache_key]
+        if now_ts - ts < CACHE_TTL: # Using the same 60s TTL as billing_cache
+            print(f"DEBUG: Serving client_events for {client_name} {month}/{year} from cache")
+            return jsonify(data) # Assuming data is already in jsonifyable format
+
     try:
-        client_name = request.args.get('client_name')
-        month = int(request.args.get('month', datetime.now().month))
-        year = int(request.args.get('year', datetime.now().year))
         
         if not client_name:
             return jsonify({'status': 'error', 'message': 'Client name is required'}), 400
@@ -1729,10 +1841,12 @@ def get_client_events():
                     'duration_hours': duration_hours
                 })
         
-        return jsonify({
+        response_data = {
             'status': 'success',
             'data': client_events
-        })
+        }
+        _client_events_cache[cache_key] = (now_ts, response_data)
+        return jsonify(response_data)
         
     except Exception as e:
         print(f"ERROR in get_client_events: {str(e)}")
@@ -1746,35 +1860,34 @@ def get_client_events():
 @app.route('/api/get_instructor_events', methods=['GET'])
 def get_instructor_events():
     """Fetch events for a specific instructor and month."""
+    instructor_name = request.args.get('instructor')
+    month = int(request.args.get('month'))
+    year = int(request.args.get('year'))
+
+    cache_key = (instructor_name, month, year)
+    now_ts = time.time() # time should be imported
+
+    if cache_key in _instructor_events_cache:
+        ts, data = _instructor_events_cache[cache_key]
+        if now_ts - ts < CACHE_TTL: # Using 60s TTL
+            print(f"DEBUG: Serving instructor_events for {instructor_name} {month}/{year} from cache")
+            return jsonify(data)
+
     try:
-        instructor_name = request.args.get('instructor')
-        month = int(request.args.get('month'))
-        year = int(request.args.get('year'))
         
         if not instructor_name:
             return jsonify({'error': 'Instructor name is required'}), 400
         
-        # Calculate date range for the month
-        start_date = datetime(year, month, 1).isoformat() + 'Z'
+        # Calculate date range for the month (timezone-aware for fetch_events_from_calendar)
+        local_tz = pytz.timezone('Asia/Jerusalem') # pytz should be imported
+        start_date_dt = local_tz.localize(datetime(year, month, 1))
         if month == 12:
-            end_date = datetime(year + 1, 1, 1).isoformat() + 'Z'
+            end_date_dt = local_tz.localize(datetime(year + 1, 1, 1))
         else:
-            end_date = datetime(year, month + 1, 1).isoformat() + 'Z'
+            end_date_dt = local_tz.localize(datetime(year, month + 1, 1))
         
-        # Fetch events from calendar
-        service = get_calendar_service()
-        if not service:
-            return jsonify({'error': 'Failed to connect to Google Calendar'}), 500
-            
-        events_result = service.events().list(
-            calendarId=os.getenv('CALENDAR_ID'),
-            timeMin=start_date,
-            timeMax=end_date,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute()
-        
-        events = events_result.get('items', [])
+        # Fetch events using the optimized helper function
+        events = fetch_events_from_calendar(start_date_dt, end_date_dt)
         
         # Get valid client names from sheets
         valid_client_names = get_client_names_from_sheets()
@@ -1834,10 +1947,12 @@ def get_instructor_events():
                     print(f"Error processing event time: {e}")
                     continue
         
-        return jsonify({
+        response_data = {
             'success': True,
             'events': instructor_events
-        })
+        }
+        _instructor_events_cache[cache_key] = (now_ts, response_data)
+        return jsonify(response_data)
         
     except Exception as e:
         print(f"Error fetching instructor events: {e}")
